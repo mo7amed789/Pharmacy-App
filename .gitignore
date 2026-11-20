@@ -1,0 +1,36 @@
+# Pharmacy Enterprise — .gitignore
+# v6.2 (audit step 4C). No repo is initialised by the app; this file
+# only matters if the folder is ever put under git.
+
+# --- local data: never commit the live database or its sidecars ---
+pharmacy.db
+pharmacy.db-wal
+pharmacy.db-shm
+*.db
+*.db-wal
+*.db-shm
+backups/
+receipt_*.txt
+mobile_requests.log
+*.log
+startup.log
+
+# --- generated TLS identity: a future full zip must NOT ship these;
+# the server generates them at runtime into certs/ on first start ---
+key.pem
+cert.pem
+certs/
+*.bak
+
+# --- Python bytecode / caches ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- test scratch databases (created by tests/, safe to delete) ---
+tests/dbs/
+tests/srv/
+
+# --- the plaintext default-passwords file: delete after changing
+# both passwords; never commit it if it still exists ---
+DEFAULT_LOGINS.txt

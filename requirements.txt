@@ -1,0 +1,4 @@
+# Pharmacy Enterprise v1 — stdlib only, NO packages to install.
+# Uses only Python standard library: tkinter, sqlite3, hashlib, csv, shutil.
+# Python 3.11.2 on Windows, launcher: py
+# Do NOT run pip install — there is nothing to install.
