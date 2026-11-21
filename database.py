@@ -2505,6 +2505,33 @@ class DB:
             "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    def audit_query(self, text="", action="", user="", limit=200):
+        """v6.13: سجل التدقيق بفلاتر — نص حر (في التفاصيل أو المستخدم)،
+        نوع الإجراء، المستخدم، وحد أقصى للصفوف (الأحدث أولاً)."""
+        sql = "SELECT * FROM audit_log WHERE 1=1"
+        args = []
+        if text:
+            sql += " AND (details LIKE ? OR user LIKE ?)"
+            args += ["%" + text + "%", "%" + text + "%"]
+        if action:
+            sql += " AND action=?"
+            args.append(action)
+        if user:
+            sql += " AND user=?"
+            args.append(user)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
+
+    def audit_actions(self):
+        """أنواع الإجراءات الموجودة فعلاً في السجل (لقائمة الفلتر)."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT action FROM audit_log ORDER BY action").fetchall()
+        return [r[0] for r in rows]
+
+    def audit_count(self):
+        return self.conn.execute("SELECT COUNT(*) c FROM audit_log").fetchone()["c"]
+
     # ---------- CSV import / export / backup ----------
     def export_drugs_csv(self, path):
         rows = self.conn.execute("SELECT * FROM drugs WHERE active=1 ORDER BY trade_en").fetchall()

@@ -3,7 +3,7 @@
 Offline-first pharmacy management app for Windows, Arabic-first UI, in Egyptian pounds (EGP).
 Built with Python standard library only (Tkinter + SQLite) — no pip packages, no venv.
 
-**Version: v6.9.1**
+**Version: v6.13**
 
 ## Features
 
@@ -82,6 +82,24 @@ The installed app can update itself when new code lands on `main`:
   installing.
 
 Files: `updater.py`, Settings section in `main.py`, `tests/test_updater.py`.
+
+## Background automation & audit log — v6.13
+
+Quiet background jobs, on top of cloud sync:
+
+- **Auto catalog sync**: when Supabase sync is configured, the catalog pulls
+  every 24 hours in the background, silently. Failures never interrupt anyone:
+  they retry after one hour and are recorded in the audit log and in
+  Settings → 🤖 المهام التلقائية.
+- **Auto backup**: a verified database backup lands in `backups/` every
+  24 hours (`*_auto.db`), keeping the newest 10 only.
+- **Audit log**: everything of note (sales, returns, drug edits, purchases,
+  logins, backups, syncs, app updates) is recorded, capped at the newest
+  5,000 events so the log never grows. Settings → سجل التدقيق offers free-text
+  search, action and user filters, and a count.
+
+Files: `automation.py`, `DB.audit_query/audit_actions/audit_count` in
+`database.py`, Settings sections in `main.py`, `tests/test_automation.py`.
 
 ## Full Arabic guide
 
