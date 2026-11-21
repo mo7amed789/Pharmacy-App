@@ -262,7 +262,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.20", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.21", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -496,7 +496,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.20 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.21 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         # v6.20: screen-aware default size + sensible minimum + the
         # window reopens with the size, position and maximized state it
@@ -898,6 +898,9 @@ class App:
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="🏠 الرئيسية")
         self.dash_tab = tab
+        # v6.21: scrollable like every other tab — nothing below the
+        # fold on small screens (1366x768 laptops and 125%/150% DPI).
+        tab = self._scrollable_tab("🏠 الرئيسية", tab)
         ttk.Label(tab, text="لوحة التحكم الرئيسية", style="Header.TLabel").pack(
             anchor="w", padx=12, pady=(10, 2))
         self.lbl_dash_date = ttk.Label(tab, text="", style="Muted.TLabel")
@@ -1067,7 +1070,12 @@ class App:
 
         def _on_conf(_e=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas.itemconfig(inner_id, width=canvas.winfo_width())
+            # v6.21: content taller than the viewport scrolls; shorter
+            # content still stretches to fill it (trees keep their old
+            # full-height look instead of collapsing to a stub).
+            canvas.itemconfig(inner_id, width=canvas.winfo_width(),
+                              height=max(canvas.winfo_height(),
+                                         inner.winfo_reqheight()))
         inner.bind("<Configure>", _on_conf)
         canvas.bind("<Configure>", _on_conf)
 
@@ -1266,6 +1274,8 @@ class App:
         if tab is None:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text="🛒 الكاشير (POS)")
+        # v6.21: scrollable so nothing is hidden on small screens.
+        tab = self._scrollable_tab("🛒 الكاشير (POS)", tab)
         # Big scan / search bar at the top
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=10, pady=(10, 4))
@@ -1765,6 +1775,8 @@ class App:
         if tab is None:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text="📦 المخزون")
+        # v6.21: scrollable so nothing is hidden on small screens.
+        tab = self._scrollable_tab("📦 المخزون", tab)
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="بحث:").pack(side="left")
@@ -2172,6 +2184,8 @@ class App:
         if tab is None:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text="🧾 المشتريات والموردين")
+        # v6.21: scrollable so nothing is hidden on small screens.
+        tab = self._scrollable_tab("🧾 المشتريات والموردين", tab)
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="المورد:").pack(side="left")
@@ -2606,6 +2620,8 @@ class App:
         if tab is None:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text="👥 العملاء")
+        # v6.21: scrollable so nothing is hidden on small screens.
+        tab = self._scrollable_tab("👥 العملاء", tab)
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="بحث:").pack(side="left")
@@ -2701,6 +2717,8 @@ class App:
         if tab is None:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text="📊 التقارير")
+        # v6.21: scrollable so nothing is hidden on small screens.
+        tab = self._scrollable_tab("📊 التقارير", tab)
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="التاريخ (YYYY-MM-DD):").pack(side="left")
@@ -3456,6 +3474,8 @@ class App:
         if tab is None:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text="💰 الخزنة والورديات")
+        # v6.21: scrollable so nothing is hidden on small screens.
+        tab = self._scrollable_tab("💰 الخزنة والورديات", tab)
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=8)
         self.lbl_shift = ttk.Label(top, text="", font=("Segoe UI", 12, "bold"))
@@ -5820,7 +5840,32 @@ def _try_restore_latest_backup():
     return False
 
 
+def _enable_dpi_awareness():
+    """v6.21: per-monitor DPI awareness on Windows (best-effort).
+
+    shcore.SetProcessDpiAwareness(2) = PER_MONITOR_DPI_AWARE (Win 8.1+);
+    user32.SetProcessDPIAware() is the Vista+ fallback.  Both are
+    wrapped so non-Windows machines and very old systems simply skip.
+    """
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
 def main():
+    # v6.21: tell Windows this process is per-monitor DPI aware BEFORE
+    # any Tk window exists — without it Windows bitmap-stretches the
+    # whole app at 125%/150% display scaling (blurry text, and sizes
+    # computed against a fake 96-DPI screen so content hides).
+    _enable_dpi_awareness()
     try:
         db = DB()
     except Exception:

@@ -150,7 +150,7 @@ class TestWindowSizing(unittest.TestCase):
 
     def test_setup_main_window_helper(self):
         seg = func_source(self.tree, self.src, "setup_main_window")
-        self.assertIn("minsize(1024, 600)", seg)
+        self.assertIn("minsize(min(1024, max(sw - 40, 640))", seg)  # v6.21: capped by the real screen
         self.assertIn("ui_geometry", seg)
         self.assertIn("ui_maximized", seg)
         self.assertIn("winfo_screenwidth", seg)     # حجم افتراضي يفهم الشاشة
@@ -174,8 +174,8 @@ class TestWindowSizing(unittest.TestCase):
         self.assertIn("def center_window(", self.src)
 
     def test_version_bumped(self):
-        self.assertIn("Pharmacy Enterprise v6.20", self.main_src)
-        self.assertIn("نظام إدارة الصيدلية — v6.20", self.main_src)
+        self.assertIn("Pharmacy Enterprise v6.21", self.main_src)
+        self.assertIn("نظام إدارة الصيدلية — v6.21", self.main_src)
 
 
 if __name__ == "__main__":
