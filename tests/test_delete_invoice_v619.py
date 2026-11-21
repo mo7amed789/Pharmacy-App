@@ -160,7 +160,7 @@ check("return_sale itself writes audit_log (every caller logged)",
       and '"return_sale"' in dbpy)
 sw = open(os.path.join(SRC, "sw.js"), encoding="utf-8").read()
 check("sw cache bumped so phones fetch the v6.19 page",
-      "pharmacy-mobile-v619" in sw and "pharmacy-mobile-v616" not in sw)
+      "pharmacy-mobile-v623" in sw and "pharmacy-mobile-v616" not in sw)
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 sys.exit(1 if FAIL else 0)

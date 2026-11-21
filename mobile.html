@@ -134,6 +134,11 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
         <details><summary style="font-weight:700;cursor:pointer">مسح حي على http؟ (Chrome فقط)</summary>
         <p style="margin:6px 0">افتح <b class="ltr">chrome://flags/#unsafely-treat-insecure-origin-as-secure</b> ← أضف <b class="ltr" id="httpOrigin"></b> ← فعّلها Enabled ← أعد تشغيل المتصفح.</p></details>
       </div>
+      <div id="pcScanBanner" class="box warn hidden">
+        <b>🖥️ الكمبيوتر يطلب مسح باركود</b>
+        <p style="margin:6px 0">نافذة إضافة الدواء على الكمبيوتر تنتظر باركوداً — اضغط «امسح الآن» وصوّر باركود العلبة، وسيصل للكمبيوتر فوراً.</p>
+        <button class="btn blue" onclick="pcScanStart()">📷 امسح الآن للكمبيوتر</button>
+      </div>
       <div class="row" style="margin-top:8px">
         <button class="btn blue" id="scanBtn" onclick="startScan()">📷 مسح الباركود</button>
         <button class="btn" id="photoBtn" style="background:#6D45D6" onclick="$('photoInput').click()">📸 صوّر الباركود</button>
@@ -288,7 +293,7 @@ function savePin(){
 async function enterApp(){
   $('pinScreen').classList.add('hidden');$('tabs').classList.remove('hidden');show('inv');
   if(!await loadCustomers()){askPin('الرمز غير صحيح — أدخل الرمز الحالي من تبويب الموبايل.');return}
-  await doSearch('');updateHttpsBanner();startLivePoll();pollLive();
+  await doSearch('');updateHttpsBanner();startLivePoll();pollLive();startPcScanPoll();
 }
 async function loadCustomers(){
   try{
@@ -571,6 +576,7 @@ function onDetected(code){
   onScanned(code);
 }
 async function onScanned(code){
+  if(pcScanId!=null){await pcScanDeliver(code);return}
   $('searchInput').value=code;
   try{
     const r=await api('/api/drug/'+encodeURIComponent(code));
@@ -653,6 +659,27 @@ function startLivePoll(){
   if(lt)return;
   if(!lBound){lBound=true;document.addEventListener('visibilitychange',()=>{if(!document.hidden&&PIN)pollLive()});addEventListener('focus',()=>{if(PIN)pollLive()})}
   sched(5000);
+}
+
+/* ---------- v6.23: PC scan request (add-drug dialog) ---------- */
+let pcPendingId=0,pcScanId=null,pcPollT=null;
+function showPcScan(id){pcPendingId=id;$('pcScanBanner').classList.remove('hidden')}
+function hidePcScan(){pcPendingId=0;$('pcScanBanner').classList.add('hidden')}
+async function pollPcScan(){
+  if(!PIN||document.hidden||pcScanId!=null)return;
+  try{
+    const r=await api('/api/scan-request');chk(r);const d=await r.json();
+    if(d&&d.pending&&d.id)showPcScan(d.id);else hidePcScan();
+  }catch(e){if(!quiet(e)){/* keep polling silently */}}
+}
+function startPcScanPoll(){if(pcPollT)return;pcPollT=setInterval(pollPcScan,3000);pollPcScan()}
+function pcScanStart(){if(!pcPendingId)return;pcScanId=pcPendingId;startScan()}
+async function pcScanDeliver(code){
+  const id=pcScanId;pcScanId=null;hidePcScan();
+  try{
+    const r=await api('/api/scan-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,code:code})});
+    chk(r);showMsg('أُرسل الباركود إلى الكمبيوتر ✔','ok');
+  }catch(e){if(!quiet(e))showMsg('تعذّر إرسال الباركود — أعد الطلب من الكمبيوتر.')}
 }
 
 /* ---------- my invoices & history ---------- */

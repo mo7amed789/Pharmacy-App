@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0B5D57">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="الصيدلية">
+<title>فاتورة موبايل — Pharmacy Enterprise</title>
+<script src="/zxing.min.js"></script>
+<style>
+:root{--ink:#12292A;--mut:#4F6667;--bg:#F1F5F4;--card:#fff;--line:#DDE6E5;--pri:#0B5D57;--pri2:#084642;--tint:#DDF1EE;--ok:#177A3E;--okbg:#DFF5E6;--err:#B42318;--errbg:#FDE8E6;--warn:#9A5B00;--warnbg:#FFF1D6;--blue:#1F5FD1}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{scroll-padding-top:120px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",Tahoma,"Noto Naskh Arabic",sans-serif;direction:rtl;text-align:right;padding-top:env(safe-area-inset-top)}
+.ltr{direction:ltr;unicode-bidi:embed;display:inline-block;text-align:left;font-variant-numeric:tabular-nums}
+.hidden{display:none!important}
+body,h1,h2,small,label,nav,.card,.drug,.line,.inv{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,select{-webkit-user-select:text;user-select:text}
+button{font:inherit;cursor:pointer;touch-action:manipulation}
+header{position:sticky;top:0;z-index:20;background:var(--pri);color:#fff;padding:10px 14px 0;padding-top:calc(10px + env(safe-area-inset-top));margin-top:calc(-1*env(safe-area-inset-top))}
+.top{display:flex;align-items:center;gap:10px}
+.logo{width:36px;height:36px;border-radius:10px;background:#fff;color:var(--pri);display:grid;place-items:center;font-size:22px;flex:none}
+.top h1{margin:0;font-size:18px;line-height:1.2}
+.top small{display:block;color:#BDE6E1;font-size:12px}
+.conn{margin-inline-start:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#CFEFEA}
+.dot{width:9px;height:9px;border-radius:50%;background:#F87171}.dot.on{background:#4ADE80;box-shadow:0 0 0 4px rgba(74,222,128,.25)}
+nav{display:flex;gap:4px;margin-top:10px}
+nav button{flex:1;border:0;background:transparent;color:#BDE6E1;padding:14px 4px;font-weight:700;font-size:16px;border-radius:10px 10px 0 0}
+nav button.on{background:var(--bg);color:var(--pri)}
+main{max-width:720px;margin:0 auto;padding:12px 12px 170px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.card h2{margin:0 0 10px;font-size:17px;color:var(--pri)}
+.muted{color:var(--mut);font-size:14px}
+input,select,textarea{width:100%;font:inherit;font-size:17px;padding:12px 13px;border:1.5px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);margin-bottom:8px;text-align:right}
+input[type=number],input.ltr{direction:ltr;text-align:left}
+input:focus,select:focus,textarea:focus,button:focus-visible{outline:3px solid #7CCFC6;border-color:var(--pri)}
+label.f{display:block;font-size:13px;font-weight:700;color:var(--mut);margin:4px 2px 4px}
+.btn{width:100%;border:0;border-radius:12px;padding:15px;min-height:52px;font-size:17px;font-weight:700;background:var(--pri);color:#fff;margin-top:6px}
+.btn:active{background:var(--pri2)}
+.btn.sec{background:#fff;color:var(--pri);border:1.5px solid var(--pri)}
+.btn.gray{background:#E6ECEB;color:var(--ink)}
+.btn.red{background:var(--err)}
+.btn.blue{background:var(--blue)}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.search{position:relative}
+.search input{margin:0;-webkit-appearance:none;appearance:none}
+input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search-results-button,input[type=search]::-webkit-search-results-decoration{display:none}
+.search i{position:absolute;inset-inline-start:14px;top:50%;transform:translateY(-50%);font-style:normal;opacity:.5}
+.msg{display:none;padding:12px 14px;border-radius:12px;font-weight:700;margin-bottom:12px}
+.msg.err{display:block;background:var(--errbg);color:var(--err)}
+.msg.ok{display:block;background:var(--okbg);color:var(--ok)}
+.toast{position:fixed;top:calc(12px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);background:var(--ok);color:#fff;padding:12px 18px;border-radius:12px;font-weight:700;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:92%;text-align:center}
+.toast button{margin-inline-start:12px;background:#fff;color:var(--ok);border:0;border-radius:8px;padding:8px 14px;min-height:44px;font-weight:700}
+.warnl{color:var(--warn);background:var(--warnbg);border-radius:8px;padding:4px 8px;font-size:13px;font-weight:700;margin-top:4px}
+.box{border-radius:12px;padding:12px;margin-top:10px;font-size:14px}
+.box.err{background:var(--errbg);border:1.5px solid var(--err)}
+.box.warn{background:var(--warnbg);border:1.5px solid #D9A441}
+.drug{border:1px solid var(--line);border-radius:12px;padding:11px;margin-top:8px;background:#fff}
+.drug .t{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.drug b{font-size:16px}
+.drug .m{color:var(--mut);font-size:13px;margin:1px 0 9px}
+.stock{flex:none;font-size:13px;font-weight:700;padding:3px 9px;border-radius:99px;background:var(--okbg);color:var(--ok)}
+.stock.low{background:var(--errbg);color:var(--err)}
+.units{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.units button{border:1.5px solid var(--pri);background:#fff;color:var(--pri);border-radius:10px;padding:8px 2px;min-height:56px;font-weight:700;line-height:1.3}
+.units button small{display:block;font-weight:600;color:var(--mut);font-size:13px}
+.units button:active{background:var(--tint)}
+.line{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+.line:last-child{border:0}
+.line .n{font-weight:700}.line .p{color:var(--mut);font-size:13px}
+.line.held{opacity:.6;background:#F3F5F5}.line.held .n{text-decoration:line-through}
+.qty{display:flex;align-items:center;gap:10px}
+.qty button{width:48px;height:48px;border-radius:11px;border:1.5px solid var(--pri);background:#fff;color:var(--pri);font-size:22px;font-weight:700}
+.qty button.x{width:auto;padding:0 12px;font-size:15px;margin-inline-start:10px}
+.pay{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.pay button{border:1.5px solid var(--line);background:#fff;border-radius:11px;padding:15px 2px;font-weight:700}
+.pay button.sel{border-color:var(--pri);background:var(--tint);color:var(--pri)}
+#bar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom));box-shadow:0 -6px 20px rgba(0,0,0,.08);z-index:15}
+#bar .in{max-width:720px;margin:0 auto;display:flex;align-items:center;gap:12px}
+#bar .tot{flex:1;font-size:13px;color:var(--mut)}
+#bar .tot b{display:block;font-size:24px;color:var(--ok);line-height:1.2}
+#bar .btn{width:auto;flex:none;margin:0;padding:14px 22px}
+#scanArea{margin-top:10px;position:relative}
+#scanVideo{width:100%;max-height:300px;object-fit:cover;border-radius:12px;background:#000;display:block}
+.frame{position:absolute;left:50%;top:calc(50% - 30px);transform:translate(-50%,-50%);width:230px;height:110px;border:3px solid #4ADE80;border-radius:12px;pointer-events:none}
+.inv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.inv:last-child{border:0}
+.inv .a{font-weight:700}.inv .b{color:var(--mut);font-size:13px}.inv .c{font-weight:700;text-align:left}
+.ok-s{text-align:center;padding:26px 8px}
+.ok-s .big{width:84px;height:84px;border-radius:50%;background:var(--okbg);color:var(--ok);display:grid;place-items:center;font-size:44px;margin:0 auto 10px}
+.steps{display:flex;gap:5px;margin-bottom:12px}.steps i{flex:1;height:5px;border-radius:9px;background:var(--line)}.steps i.on{background:var(--pri)}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div class="logo">💊</div>
+    <div><h1>فاتورة موبايل</h1><small>تُحفظ وتُطبع من الكمبيوتر</small></div>
+    <div class="conn"><span id="connDot" class="dot"></span><span><span id="connText">غير متصل</span><br><span id="lastUpdate">—</span></span></div>
+  </div>
+  <nav id="tabs" class="hidden">
+    <button class="on" data-v="inv" onclick="show('inv')">🧾 فاتورة</button>
+    <button data-v="mine" onclick="show('mine')">📋 فواتيري</button>
+    <button data-v="hist" onclick="show('hist')">📜 السجل</button>
+  </nav>
+</header>
+<main>
+  <div id="msg" class="msg"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <section id="pinScreen" class="card" style="margin-top:20px">
+    <h2>🔐 الرمز (PIN)</h2>
+    <p class="muted">اكتب الرمز المكوّن من 6 أرقام من تبويب الموبايل في برنامج الكمبيوتر.</p>
+    <form id="pinForm" autocomplete="on" onsubmit="savePin();return false">
+      <input type="text" name="username" value="pharmacy" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;opacity:0;height:0;width:0;padding:0;border:0;margin:0">
+      <input id="pinInput" name="password" class="ltr" type="password" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="current-password" autofocus style="font-size:26px;letter-spacing:8px;text-align:center">
+      <label style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-weight:700"><input type="checkbox" id="rememberPin" checked style="width:22px;height:22px;margin:0"> تذكّر هذا الهاتف (دخول تلقائي)</label>
+      <p class="muted" style="margin:0 0 4px">لو الرمز اتغيّر من الكمبيوتر هيطلبه منك تاني تلقائيًا.</p>
+      <button class="btn" type="submit">دخول</button>
+    </form>
+  </section>
+
+  <div id="invView" class="hidden">
+    <div class="card">
+      <h2>🔎 بحث عن دواء</h2>
+      <div class="search"><input id="searchInput" type="search" dir="auto" placeholder="اسم الدواء أو الباركود" autocomplete="off"></div>
+      <div id="httpsBanner" class="box warn hidden">
+        <b>📷 الصفحة مفتوحة على http</b>
+        <p style="margin:6px 0">الكاميرا الحية تحتاج https، لذلك زر «صوّر الباركود» يفتح كاميرا الهاتف ويقرأ الباركود من الصورة — يعمل هنا مباشرة.</p>
+        <button id="secureLinkBtn" class="btn sec hidden" onclick="openSecureScanner()">🔒 افتح المسح الحي الآمن</button>
+        <details><summary style="font-weight:700;cursor:pointer">مسح حي على http؟ (Chrome فقط)</summary>
+        <p style="margin:6px 0">افتح <b class="ltr">chrome://flags/#unsafely-treat-insecure-origin-as-secure</b> ← أضف <b class="ltr" id="httpOrigin"></b> ← فعّلها Enabled ← أعد تشغيل المتصفح.</p></details>
+      </div>
+      <div id="pcScanBanner" class="box warn hidden">
+        <b>🖥️ الكمبيوتر يطلب مسح باركود</b>
+        <p style="margin:6px 0">نافذة إضافة الدواء على الكمبيوتر تنتظر باركوداً — اضغط «امسح الآن» وصوّر باركود العلبة، وسيصل للكمبيوتر فوراً.</p>
+        <button class="btn blue" onclick="pcScanStart()">📷 امسح الآن للكمبيوتر</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn blue" id="scanBtn" onclick="startScan()">📷 مسح الباركود</button>
+        <button class="btn" id="photoBtn" style="background:#6D45D6" onclick="$('photoInput').click()">📸 صوّر الباركود</button>
+      </div>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden" onchange="onPhotoPicked(event)">
+      <p id="photoStatus" class="muted"></p>
+      <div id="scanArea" class="hidden">
+        <video id="scanVideo" playsinline muted autoplay></video><div class="frame"></div>
+        <p id="scanStatus" style="font-weight:700;color:var(--ok);text-align:center;margin:8px 0">وجّه الكاميرا للباركود</p>
+        <div class="row"><button class="btn gray" id="flashBtn" onclick="toggleFlash()">🔦 الفلاش: مطفي</button><button class="btn red" onclick="stopScan()">⏹ إيقاف</button></div>
+        <p id="flashNote" class="muted hidden"></p>
+      </div>
+      <div id="scanError" class="box err hidden"><b>تعذّر فتح الكاميرا</b><p style="margin:4px 0">اسمح للكاميرا من أيقونة القفل 🔒 في المتصفح ثم أعد المحاولة.</p><p class="ltr muted" id="scanErrName"></p><button class="btn" onclick="startScan()">🔄 إعادة المحاولة</button></div>
+      <div id="unknownBar" class="box warn hidden"><b>⚠️ الباركود غير مضاف</b><p style="margin:4px 0">الباركود <b class="ltr" id="unknownCode"></b> غير مسجل في قاعدة البيانات.</p>
+        <div class="row"><button class="btn" onclick="openAddDrug()">➕ إضافة الدواء</button><button class="btn gray" onclick="$('unknownBar').classList.add('hidden')">إغلاق</button></div></div>
+      <div id="results"></div>
+      <button class="btn sec" onclick="searchBarcode()">🔳 بحث بالباركود المكتوب</button>
+    </div>
+
+    <div id="addDrugCard" class="card hidden">
+      <h2>➕ إضافة دواء جديد</h2>
+      <div class="steps" id="adSteps"><i></i><i></i><i></i><i></i></div>
+      <div id="adStep1">
+        <label class="f">باركود العلبة (GTIN)</label><input id="adBarcode" inputmode="numeric" class="ltr">
+        <label class="f">الاسم التجاري (إنجليزي) *</label><input id="adTradeEn" dir="auto">
+        <label class="f">الاسم التجاري (عربي)</label><input id="adTradeAr" dir="auto">
+      </div>
+      <div id="adStep2" class="hidden">
+        <label class="f">المادة الفعالة</label><input id="adScientific" dir="auto">
+        <label class="f">الشركة</label><input id="adCompany" dir="auto">
+        <label class="f">الشكل الصيدلاني</label><input id="adForm" list="adFormList" dir="auto" placeholder="Tablets / Syrup / Cream">
+        <datalist id="adFormList"><option value="Tablets"><option value="Capsules"><option value="Syrup"><option value="Suspension"><option value="Drops"><option value="Cream"><option value="Ointment"><option value="Gel"><option value="Spray"><option value="Injection"><option value="Sachet"><option value="Suppository"></datalist>
+        <label class="f">التركيز</label><input id="adStrength" dir="auto" placeholder="250 أو 250mg">
+      </div>
+      <div id="adStep3" class="hidden">
+        <div class="row"><div><label class="f">سعر الشراء (علبة)</label><input id="adBuy" type="number" min="0" step="0.01"></div><div><label class="f">سعر البيع (علبة)</label><input id="adSell" type="number" min="0" step="0.01"></div></div>
+        <label class="f">الحد الأدنى للمخزون (علبة)</label><input id="adMin" type="number" min="0" step="1" value="5">
+        <label class="f">خصم الدواء الافتراضي</label>
+        <select id="adDiscType"><option value="none">بدون خصم</option><option value="percent">نسبة %</option><option value="amount">مبلغ ثابت (ج.م) لكل وحدة</option></select>
+        <input id="adDiscValue" type="number" min="0" step="0.01" placeholder="قيمة الخصم">
+        <div class="row"><div><label class="f">شرائط في العلبة</label><input id="adStrips" type="number" min="1" value="1"></div><div><label class="f">حبات في الشريط</label><input id="adTablets" type="number" min="1" value="1"></div></div>
+      </div>
+      <div id="adStep4" class="hidden"><p><b>راجع البيانات قبل الحفظ</b></p><div id="adReview"></div></div>
+      <p id="addDrugErr" class="hidden" style="color:var(--err);font-weight:700"></p>
+      <div class="row"><button class="btn gray" id="adBackBtn" onclick="addDrugBack()">رجوع</button><button class="btn" id="adNextBtn" onclick="addDrugNext()">التالي</button><button class="btn hidden" id="adSaveBtn" onclick="saveNewDrug()">💾 حفظ الدواء</button></div>
+      <button class="btn gray" onclick="closeAddDrug()">إلغاء بدون حفظ</button>
+    </div>
+
+    <div class="card"><h2>🛒 السلة</h2><div id="cart"></div><p id="cartEmpty" class="muted">السلة فارغة — ابحث عن دواء أو امسح باركود.</p></div>
+
+    <div class="card">
+      <h2>👤 العميل والدفع</h2>
+      <select id="customerSelect"><option value="">عميل نقدي</option></select>
+      <label class="f">طريقة الدفع</label><select id="payMethod"><option value="cash">💵 نقدي</option><option value="card">💳 كارت</option><option value="credit">📒 آجل</option></select>
+      <input id="paidInput" type="number" min="0" step="0.01" placeholder="المدفوع (فارغ = الإجمالي)"><p id="changeLine" style="font-weight:700;font-size:18px;margin:0 0 8px"></p>
+      <textarea id="noteInput" rows="2" placeholder="ملاحظة (اختياري)"></textarea>
+    </div>
+  </div>
+
+  <div id="mineView" class="card hidden"><h2>📋 فواتيري اليوم</h2><div id="myInvoices"></div><p class="muted">الطباعة من الكمبيوتر.</p><button class="btn sec" onclick="loadMyInvoices()">🔄 تحديث</button></div>
+
+  <div id="histView" class="hidden">
+    <div class="card">
+      <h2>📜 سجل الفواتير</h2>
+      <input id="histSearch" type="search" dir="auto" placeholder="رقم فاتورة أو عميل" autocomplete="off">
+      <input id="histDate" type="date" class="ltr" onchange="loadHistory()">
+      <div id="historyList"></div>
+      <p class="muted">🖥️ كمبيوتر · 📱 موبايل · ✏️ معدّلة · 🖨️ مطبوعة · ⏳ بانتظار الطباعة</p>
+    </div>
+    <div id="histDetail" class="card hidden">
+      <h2 id="histDetailTitle">فاتورة</h2>
+      <div id="histLines"></div>
+      <input id="histAddInput" type="search" dir="auto" placeholder="أضف صنفاً: اسم أو باركود" autocomplete="off">
+      <button class="btn sec" onclick="histSearchAdd()">🔎 بحث عن صنف</button>
+      <div id="histAddResults"></div>
+      <div class="row" style="margin-top:10px"><input id="histDiscount" type="number" min="0" step="0.01" placeholder="الخصم"><input id="histPaid" type="number" min="0" step="0.01" placeholder="المدفوع"></div>
+      <label class="f">طريقة الدفع</label><select id="histPayMethod"><option value="cash">💵 نقدي</option><option value="card">💳 كارت</option><option value="credit">📒 آجل</option></select>
+      <p id="histDiff" style="font-weight:700"></p>
+      <div id="histMsg" class="msg"></div>
+      <button class="btn" onclick="saveHistoryEdit()">✅ اعتماد التعديلات</button>
+      <button class="btn red" onclick="askVoidInvoice()">🗑️ حذف الفاتورة</button>
+      <button class="btn gray" onclick="closeHistDetail()">إغلاق بدون اعتماد</button>
+    </div>
+    <!-- v6.19: the confirm box lives OUTSIDE the detail card so the new
+         per-row حذف button in the list can show it without opening the
+         invoice first. -->
+    <div id="histConfirm" class="box warn hidden"><b>راجع قبل الاعتماد</b><div id="histSummary" style="white-space:pre-line;margin:8px 0;line-height:1.8"></div><p class="muted" style="margin:0 0 6px">بعد الاعتماد فقط يُحذف ما حُذف — قبل ذلك لم يتغيّر شيء.</p><div class="row"><button class="btn" id="histOk" onclick="doHistSave()">✅ تأكيد الاعتماد</button><button class="btn gray" onclick="$('histConfirm').classList.add('hidden')">رجوع</button></div></div>
+  </div>
+
+  <section id="successScreen" class="card hidden"><div class="ok-s">
+    <div class="big">✓</div><h2 style="color:var(--ok)">تم حفظ الفاتورة</h2>
+    <p style="font-size:19px;font-weight:700;margin:4px 0" id="successInv"></p>
+    <p style="font-size:24px;font-weight:700;color:var(--ok);margin:4px 0" id="successTotal"></p>
+    <p style="font-size:19px;font-weight:700;color:var(--pri)" id="successChange" class="hidden"></p>
+    <p class="muted">جاهزة للطباعة من الكمبيوتر.</p>
+    <button class="btn" onclick="newInvoice()">➕ فاتورة جديدة</button></div></section>
+</main>
+
+<div id="bar" class="hidden"><div class="in"><div class="tot"><span id="barCount">السلة فارغة</span><b id="barTotal">0.00 ج.م</b><span id="barDisc"></span></div><button class="btn" id="saveBtn" onclick="saveInvoice()">💾 حفظ الفاتورة</button></div></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const f2=n=>Number(n||0).toFixed(2);
+const L=u=>u==='box'?'علبة':u==='strip'?'شريط':'حبة';
+// Forms sold by the box only (no strips / pills): creams, ointments, gels, liquids, sprays...
+const BOX_EN=/\b(cream|ointment|gel|paste|lotion|syrup|suspension|solution|drops?|spray|shampoo)\b/i,BOX_AR=/(كريم|مرهم|جل|معجون|لوشن|شراب|معلق|محلول|نقط|قطرة|بخاخ|شامبو)/;
+const boxOnly=d=>{const f=(d&&d.form)||'';return BOX_EN.test(f)||BOX_AR.test(f)};
+(function(){const m=/[#&]pin=(\d{6})(?!\d)/.exec(location.hash);if(!m)return;
+  try{sessionStorage.setItem('pe_pin',m[1]);localStorage.setItem('pe_pin',m[1])}catch(e){}
+  try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}})();
+let PIN=sessionStorage.getItem('pe_pin')||localStorage.getItem('pe_pin')||'';
+if(PIN)sessionStorage.setItem('pe_pin',PIN);
+let cart=[],payment='cash',clientRef='',view='inv';
+if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+
+function showMsg(t,k){const m=$('msg');m.textContent=t;m.className='msg '+(k||'err');scrollTo(0,0)}
+function hideMsg(){$('msg').className='msg';$('msg').textContent=''}
+function showToast(t){const e=$('toast');e.textContent=t;e.classList.remove('hidden');clearTimeout(showToast.t);showToast.t=setTimeout(()=>e.classList.add('hidden'),3000)}
+function api(p,o){o=o||{};o.headers=Object.assign({},o.headers||{},{'X-Mobile-PIN':PIN});return fetch(p,o)}
+function chk(r){if(r.status===401){askPin('الرمز غير صحيح.');throw new Error('unauthorized')}if(r.status===429){showMsg('محاولات كثيرة — انتظر دقيقة.');throw new Error('locked')}return r}
+const quiet=e=>e.message==='unauthorized'||e.message==='locked';
+
+function show(v){
+  view=v;
+  $('invView').classList.toggle('hidden',v!=='inv');
+  $('mineView').classList.toggle('hidden',v!=='mine');
+  $('histView').classList.toggle('hidden',v!=='hist');
+  $('bar').classList.toggle('hidden',v!=='inv');
+  $('successScreen').classList.add('hidden');
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  if(v==='mine')loadMyInvoices();
+  if(v==='hist')loadHistory();
+  scrollTo(0,0);
+}
+function askPin(m){
+  stopLivePoll();try{stopScan()}catch(e){}
+  PIN='';sessionStorage.removeItem('pe_pin');localStorage.removeItem('pe_pin');
+  ['invView','mineView','histView','bar','successScreen','tabs'].forEach(i=>$(i).classList.add('hidden'));
+  $('pinScreen').classList.remove('hidden');
+  $('pinInput').value='';setTimeout(()=>{try{$('pinInput').focus()}catch(e){}},50);
+  if(m)showMsg(m);
+}
+function savePin(){
+  if($('pinScreen').classList.contains('hidden'))return; // already entering (auto-submit + button)
+  const v=$('pinInput').value.trim();
+  if(!/^\d{6}$/.test(v)){showMsg('الرمز 6 أرقام فقط.');return}
+  PIN=v;sessionStorage.setItem('pe_pin',v);
+  try{if($('rememberPin').checked)localStorage.setItem('pe_pin',v);else localStorage.removeItem('pe_pin')}catch(e){}
+  hideMsg();enterApp();
+}
+async function enterApp(){
+  $('pinScreen').classList.add('hidden');$('tabs').classList.remove('hidden');show('inv');
+  if(!await loadCustomers()){askPin('الرمز غير صحيح — أدخل الرمز الحالي من تبويب الموبايل.');return}
+  await doSearch('');updateHttpsBanner();startLivePoll();pollLive();startPcScanPoll();
+}
+async function loadCustomers(){
+  try{
+    const r=await api('/api/customers');chk(r);const d=await r.json();
+    const s=$('customerSelect');s.querySelectorAll('option:not([value=""])').forEach(o=>o.remove());
+    (d.customers||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name+(c.balance?' — دين: '+f2(c.balance)+' ج.م':'');s.appendChild(o)});
+    return true;
+  }catch(e){if(quiet(e))return false;showMsg('تعذّر تحميل العملاء.');return true}
+}
+
+/* ---------- search ---------- */
+let st=null;
+$('searchInput').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(()=>doSearch($('searchInput').value),300)});
+async function doSearch(q){
+  if(!(q||'').trim()){$('results').innerHTML='';return}
+  try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''));chk(r);const d=await r.json();renderResults(d.drugs||[])}
+  catch(e){if(!quiet(e))showMsg('تعذّر البحث.')}
+}
+async function searchBarcode(){
+  const c=$('searchInput').value.trim();if(!c){showMsg('اكتب رقم الباركود أولاً.');return}
+  try{const r=await api('/api/drug/'+encodeURIComponent(c));if(r.status===404){showUnknown(c);return}chk(r);const d=await r.json();renderResults([d.drug])}
+  catch(e){if(!quiet(e))showMsg('تعذّر البحث بالباركود.')}
+}
+// Drug cards: names go in via textContent and closures, never into onclick strings.
+function drugCards(drugs,onAdd){
+  const wrap=document.createElement('div');
+  drugs.forEach(d=>{
+    const c=document.createElement('div');c.className='drug';
+    const t=document.createElement('div');t.className='t';
+    const nm=document.createElement('div');
+    const b=document.createElement('b');b.textContent=d.trade_en+(d.trade_ar?' — '+d.trade_ar:'');
+    const m=document.createElement('div');m.className='m';m.textContent=[d.strength,d.form].filter(Boolean).join(' · ')||'—';
+    nm.append(b,m);
+    const s=document.createElement('span');const n=Number(d.stock_boxes)||0;s.className='stock'+(n<=0?' low':'');s.textContent=n<=0?'⛔ نفد':'✔ '+n+' علبة';
+    t.append(nm,s);
+    const u=document.createElement('div');u.className='units';
+    const opts=avail(d);u.style.gridTemplateColumns='repeat('+opts.length+',1fr)';opts.forEach(([k,p])=>{
+      const x=document.createElement('button');x.append(L(k));
+      const sm=document.createElement('small');sm.textContent=f2(p)+' ج.م';x.appendChild(sm);
+      x.addEventListener('click',()=>onAdd(d,k,p));u.appendChild(x);
+    });
+    c.append(t,u);wrap.appendChild(c);
+  });
+  return wrap;
+}
+function renderResults(drugs){
+  const b=$('results');b.innerHTML='';
+  if(!drugs.length){b.innerHTML='<p class="muted">لا نتائج.</p>';return}
+  b.appendChild(drugCards(drugs.slice(0,20),addToCart));
+}
+
+/* ---------- cart ---------- */
+const r2=n=>Math.round((n+Number.EPSILON)*100)/100;
+const upb=d=>Math.max(1,(Number(d.strips_per_box)||1)*(Number(d.tablets_per_strip)||1));
+// Units come from the server's own pack data (strips_per_box / tablets_per_strip) plus the form rule (creams, syrups...).
+function avail(d){
+  const prices={box:d.price_box,strip:d.price_strip,pill:d.price_pill};
+  const allowed=Array.isArray(d&&d.allowed_units)&&d.allowed_units.length
+    ?d.allowed_units:['box','strip','pill'];
+  return allowed.filter(k=>Object.prototype.hasOwnProperty.call(prices,k))
+    .map(k=>[k,prices[k]]);
+}
+// Same formula as drug_default_line_discount() in database.py: percent = % of the line, amount = fixed EGP per unit.
+function defDisc(t,v,p,q){v=Number(v||0);if(!(v>0&&p>0&&q>0))return 0;if(t==='percent')return r2(p*q*Math.min(v,100)/100);if(t==='amount')return r2(Math.min(v,p)*q);return 0}
+const ldisc=c=>defDisc(c.dt,c.dv,c.unit_price,c.qty);
+const lineTot=c=>r2(c.qty*c.unit_price-ldisc(c));
+const cartTotal=()=>r2(cart.reduce((s,c)=>s+lineTot(c),0));
+const fac=c=>c.unit==='box'?c.upb:c.unit==='strip'?c.tps:1;
+const need=id=>cart.filter(x=>x.drug_id===id).reduce((s,x)=>s+x.qty*fac(x),0);
+const stockTxt=c=>c.upb>1?Math.floor(c.su/c.upb)+' علبة'+(c.su%c.upb?' و '+(c.su%c.upb)+' وحدة':''):c.su+' علبة';
+function addToCart(d,unit,price){
+  if(!avail(d).some(x=>x[0]===unit)){showToast('هذه الوحدة غير متاحة لهذا الصنف');return}
+  if(!cart.length&&!clientRef)clientRef='m-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  const f=cart.find(c=>c.drug_id===d.id&&c.unit===unit);
+  if(f)f.qty++;else cart.push({drug_id:d.id,name:d.trade_en,unit,qty:1,unit_price:price,dt:d.discount_type,dv:d.discount_value,su:Number(d.stock_units)||0,upb:upb(d),tps:Number(d.tablets_per_strip)||1});
+  renderCart();
+}
+function changeQty(i,x){const c=cart[i];c.qty+=x;if(c.qty<=0){cart.splice(i,1);c.qty=1;showUndo('تم حذف «'+c.name+'»',()=>{cart.splice(Math.min(i,cart.length),0,c);renderCart()})}renderCart()}
+function showUndo(t,fn){const e=$('toast');e.textContent=t+' ';const b=document.createElement('button');b.textContent='تراجع';b.onclick=()=>{fn();e.classList.add('hidden')};e.appendChild(b);e.classList.remove('hidden');clearTimeout(showToast.t);showToast.t=setTimeout(()=>e.classList.add('hidden'),6000)}
+let ac=null;
+function audio(){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();if(ac.state==='suspended')ac.resume()}catch(e){}return ac}
+function beep(ok){try{const a=audio(),o=a.createOscillator(),g=a.createGain();o.frequency.value=ok===false?220:1000;g.gain.value=.08;o.connect(g);g.connect(a.destination);o.start();o.stop(a.currentTime+(ok===false?.25:.09))}catch(e){}}
+function updateChange(){
+  const e=$('changeLine'),raw=$('paidInput').value.trim();
+  if(payment==='card'||!cart.length){e.textContent='';return}
+  const t=cartTotal(),p=raw===''?(payment==='credit'?0:t):parseFloat(raw);
+  if(!isFinite(p)){e.textContent='';return}
+  if(payment==='credit'){e.style.color=p>t?'var(--err)':'var(--warn)';e.textContent=p>t?'⚠️ المدفوع أكبر من الإجمالي':'يُسجَّل دين على العميل: '+f2(t-p)+' ج.م';return}
+  if(raw===''){e.textContent='';return}
+  e.style.color=p<t?'var(--err)':'var(--ok)';e.textContent=p<t?'⚠️ أقل من الإجمالي بـ '+f2(t-p)+' ج.م — للدفع الجزئي اختر «آجل»':'الباقي للعميل: '+f2(p-t)+' ج.م';
+}
+function renderCart(){
+  const b=$('cart');b.innerHTML='';$('cartEmpty').style.display=cart.length?'none':'block';
+  cart.forEach((c,i)=>{
+    const d=document.createElement('div');d.className='line';
+    d.innerHTML='<div><div class="n">'+esc(c.name)+' — '+L(c.unit)+'</div><div class="p"><span class="ltr">'+f2(c.unit_price)+'</span> × <span class="ltr">'+c.qty+'</span>'+(ldisc(c)>0?' — خصم <span class="ltr">'+f2(ldisc(c))+'</span>':'')+' = <b class="ltr">'+f2(lineTot(c))+'</b> ج.م</div>'+(need(c.drug_id)>c.su?'<div class="warnl">⚠️ المتاح بالمخزون: '+stockTxt(c)+'</div>':'')+'</div>'+
+      '<div class="qty"><button onclick="changeQty('+i+',1)">+</button><button onclick="changeQty('+i+',-1)">−</button></div>';
+    b.appendChild(d);
+  });
+  const dt=r2(cart.reduce((s,c)=>s+ldisc(c),0));
+  $('barTotal').innerHTML='<span class="ltr">'+f2(cartTotal())+'</span> ج.م';
+  $('barDisc').textContent=dt>0?'يشمل خصم أصناف '+f2(dt)+' ج.م':'';
+  $('barCount').textContent=cart.length?cart.reduce((a,c)=>a+c.qty,0)+' قطعة · '+cart.length+' صنف':'السلة فارغة';updateChange();
+}
+// Server rules (database.create_sale): cash/card need paid >= total, card/credit cannot be overpaid, credit needs a customer.
+function payUI(){
+  const p=$('paidInput');p.style.display=payment==='card'?'none':'block';
+  p.placeholder=payment==='credit'?'المدفوع الآن (فارغ = 0 والباقي دين)':'المدفوع (فارغ = الإجمالي)';p.value='';updateChange();
+}
+$('payMethod').addEventListener('change',()=>{payment=$('payMethod').value;payUI()});
+
+let saving=false;
+async function saveInvoice(){
+  if(saving)return;hideMsg();
+  if(!cart.length){showMsg('السلة فارغة.');return}
+  if(payment==='credit'&&!$('customerSelect').value){showMsg('الآجل يحتاج عميلاً.');return}
+  const total=cartTotal(),raw=$('paidInput').value.trim();let paid=null;
+  if(payment!=='card'&&raw!==''){
+    paid=parseFloat(raw);
+    if(!isFinite(paid)||paid<0){showMsg('المبلغ المدفوع غير صالح.');return}
+    if(payment==='cash'&&paid<total-0.005){showMsg('المدفوع أقل من الإجمالي ('+f2(total)+' ج.م) — للدفع الجزئي اختر «آجل» مع عميل.');return}
+    if(payment==='credit'&&paid>total+0.005){showMsg('المدفوع أكبر من الإجمالي.');return}
+  }
+  // paid=null lets the server decide (cash/card = total, credit = 0) so cents never disagree.
+  const body={items:cart.map(c=>({drug_id:c.drug_id,unit:c.unit,qty:c.qty})),
+    customer_id:$('customerSelect').value?parseInt($('customerSelect').value):null,
+    payment,paid,note:$('noteInput').value.trim(),client_ref:clientRef||undefined};
+  saving=true;$('saveBtn').textContent='جارٍ الحفظ…';
+  try{
+    const r=await api('/api/invoices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    chk(r);const d=await r.json();
+    if(!r.ok){showMsg(d.error||'تعذّر حفظ الفاتورة.');return}
+    cart=[];clientRef='';renderCart();$('noteInput').value='';$('paidInput').value='';
+    ['invView','bar'].forEach(i=>$(i).classList.add('hidden'));$('tabs').classList.add('hidden');
+    $('successScreen').classList.remove('hidden');
+    $('successInv').innerHTML='فاتورة <span class="ltr">'+esc(d.invoice_no)+'</span>';
+    $('successTotal').innerHTML='الإجمالي <span class="ltr">'+f2(d.total)+'</span> ج.م';
+    const ch=$('successChange');
+    if(d.change&&Number(d.change)>0){ch.innerHTML='الباقي <span class="ltr">'+f2(d.change)+'</span> ج.م';ch.classList.remove('hidden')}else ch.classList.add('hidden');
+    scrollTo(0,0);pollLive();
+  }catch(e){if(!quiet(e))showMsg('تعذّر الاتصال بالكمبيوتر.')}
+  finally{saving=false;$('saveBtn').textContent='💾 حفظ الفاتورة'}
+}
+function newInvoice(){$('tabs').classList.remove('hidden');show('inv');doSearch($('searchInput').value)}
+
+/* ---------- scanning (BarcodeDetector + ZXing, torch) ---------- */
+const FORMATS=['ean_13','ean_8','qr_code','code_128','code_39','upc_a','upc_e','data_matrix'];
+const SCAN_NATIVE_INTERVAL=80;
+const SCAN_ZXING_INTERVAL=250;
+const SCAN_NATIVE_GRACE=700;
+const SCAN_COOLDOWN=350;
+let stream=null,scanOn=false,tBd=null,tZx=null,cool=0,zBusy=false,bdBusy=false,torchOn=false,torchManual=false,zr=null,scanStartedAt=0,scanSession=0;
+function zReader(){
+  if(zr)return zr;
+  if(!window.ZXing||!ZXing.BrowserMultiFormatReader)return null;
+  try{
+    const h=new Map();
+    try{h.set(ZXing.DecodeHintType.TRY_HARDER,true);const F=ZXing.BarcodeFormat;
+      if(F)h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[F.EAN_13,F.EAN_8,F.CODE_128,F.CODE_39,F.QR_CODE,F.DATA_MATRIX,F.UPC_A,F.UPC_E])}catch(e){}
+    zr=new ZXing.BrowserMultiFormatReader(h);return zr;
+  }catch(e){return null}
+}
+async function zDecode(img){
+  const r=zReader();if(!r)return null;
+  try{const x=await r.decodeFromImageElement(img);if(x){const t=typeof x.getText==='function'?x.getText():(x.text||'');if(t)return String(t).trim()}}
+  catch(e){}finally{try{r.reset&&r.reset()}catch(e){}}
+  return null;
+}
+const loadImg=u=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>no(new Error('img'));i.src=u});
+async function onPhotoPicked(ev){
+  const f=ev.target.files&&ev.target.files[0],s=$('photoStatus');if(!f)return;
+  s.textContent='جارٍ قراءة الصورة…';
+  try{
+    const url=await new Promise((ok,no)=>{const fr=new FileReader();fr.onload=()=>ok(fr.result);fr.onerror=no;fr.readAsDataURL(f)});
+    const img=await loadImg(url);let found=null;
+    if(!zBusy){zBusy=true;try{found=await zDecode(img)}finally{zBusy=false}}
+    if(!found&&'BarcodeDetector' in window){try{const c=await new BarcodeDetector({formats:FORMATS}).detect(img);if(c.length&&c[0].rawValue)found=c[0].rawValue}catch(e){}}
+    if(found){s.textContent='';onScanned(found)}else s.textContent='لم يُقرأ باركود — قرّب الكاميرا وتأكد من الإضاءة.';
+  }catch(e){s.textContent='تعذّر قراءة الصورة.'}finally{ev.target.value=''}
+}
+function secureScannerUrl(){
+  if(location.protocol!=='http:' || !location.hostname) return '';
+  const host=location.hostname.includes(':')?'['+location.hostname+']':location.hostname;
+  // Do not carry query strings to the secure endpoint: old links may contain
+  // legacy credentials, while the current PIN is intentionally carried only in the fragment.
+  return 'https://'+host+':8443'+location.pathname+location.hash;
+}
+function openSecureScanner(){
+  const url=secureScannerUrl();
+  if(url) location.href=url;
+}
+function updateHttpsBanner(){
+  // Plain http still supports photo capture; offer the same-host HTTPS endpoint for live camera access.
+  const insecure=!window.isSecureContext;
+  $('httpsBanner').classList.toggle('hidden',!insecure);
+  if(insecure){
+    $('httpOrigin').textContent=location.origin;
+    $('secureLinkBtn').classList.toggle('hidden',!secureScannerUrl());
+    $('photoBtn').classList.add('hidden');
+    $('scanBtn').textContent='📸 صوّر الباركود';
+  }
+}
+function scanErr(e){
+  $('scanErrName').textContent=(e&&(e.name||String(e)))+(e&&e.message?' — '+e.message:'')+' | isSecureContext='+window.isSecureContext;
+  $('scanError').classList.remove('hidden');
+}
+const track=()=>{try{return stream&&stream.getVideoTracks()[0]}catch(e){return null}};
+function flashLbl(sup){$('flashBtn').textContent=sup===false?'🔦 الفلاش: غير مدعوم':torchOn?'🔦 الفلاش: شغال':'🔦 الفلاش: مطفي'}
+async function setTorch(on){
+  const t=track(),n=$('flashNote');
+  let caps={};try{caps=t&&t.getCapabilities?t.getCapabilities():{}}catch(e){}
+  if(!caps.torch){torchOn=false;flashLbl(false);n.textContent='الفلاش غير متاح: المتصفح أو الكاميرا لا تدعمه (آيفون/سفاري لا يدعم الفلاش من الويب).';n.classList.remove('hidden');return}
+  try{await t.applyConstraints({advanced:[{torch:!!on}]});torchOn=!!on}catch(e){torchOn=false}
+  n.classList.add('hidden');flashLbl();
+}
+function toggleFlash(){torchManual=true;setTorch(!torchOn)}
+// Flash fix: on phones with several back lenses the default "environment" camera is often the
+// ultra-wide, which has no flash. We look for the main back camera that supports torch and remember it.
+const hasTorch=t=>{try{return !!(t&&t.getCapabilities&&t.getCapabilities().torch)}catch(e){return false}};
+const opts=id=>({video:Object.assign(id?{deviceId:{exact:id}}:{facingMode:'environment'},{width:{ideal:960},height:{ideal:540},frameRate:{ideal:30,max:30}})});
+const stopS=x=>{try{x&&x.getTracks().forEach(t=>t.stop())}catch(e){}};
+async function acquire(){
+  const md=navigator.mediaDevices;let saved='';try{saved=localStorage.getItem('pe_cam')||''}catch(e){}
+  if(saved){try{const x=await md.getUserMedia(opts(saved));if(hasTorch(x.getVideoTracks()[0]))return x;stopS(x)}catch(e){}}
+  let x;
+  try{x=await md.getUserMedia(opts())}catch(e){if(e&&e.name==='OverconstrainedError')x=await md.getUserMedia({video:true});else throw e}
+  if(hasTorch(x.getVideoTracks()[0]))return x;
+  let cur='';try{cur=x.getVideoTracks()[0].getSettings().deviceId||''}catch(e){}
+  let devs=[];try{devs=(await md.enumerateDevices()).filter(d=>d.kind==='videoinput'&&d.deviceId!==cur&&!/front|user|selfie/i.test(d.label))}catch(e){}
+  const bad=/ultra|wide|tele|macro|depth|infrared/i,sc=d=>(bad.test(d.label)?2:0)+(/back|rear|environment/i.test(d.label)?0:1);
+  devs.sort((a,b)=>sc(a)-sc(b));
+  if(!devs.length)return x;
+  stopS(x);
+  for(const d of devs){
+    let y=null;
+    try{y=await md.getUserMedia(opts(d.deviceId));if(hasTorch(y.getVideoTracks()[0])){try{localStorage.setItem('pe_cam',d.deviceId)}catch(e){}return y}}catch(e){}
+    stopS(y);
+  }
+  return await md.getUserMedia(opts());
+}
+async function startScan(){
+  stopScan();audio();$('scanError').classList.add('hidden');
+  if(!window.isSecureContext||!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){$('photoInput').click();return} // http: native camera photo + ZXing
+  try{stream=await acquire()}catch(e){scanErr(e);return}
+  scanOn=true;torchManual=false;scanStartedAt=Date.now();const session=++scanSession;
+  const v=$('scanVideo');$('scanArea').classList.remove('hidden');v.srcObject=stream;try{await v.play()}catch(e){}
+  $('scanStatus').textContent='وجّه الكاميرا للباركود';$('flashNote').classList.add('hidden');
+  let nativeDetector=false;
+  if('BarcodeDetector' in window){
+    try{const det=new BarcodeDetector({formats:FORMATS});
+      nativeDetector=true;
+      tBd=setInterval(async()=>{
+        if(!scanOn||session!==scanSession||bdBusy)return;bdBusy=true;
+        try{const c=await det.detect(v);if(c.length&&c[0].rawValue)onDetected(c[0].rawValue)}catch(e){}finally{bdBusy=false}
+      },SCAN_NATIVE_INTERVAL)}catch(e){}
+  }
+  tZx=setInterval(async()=>{
+    if(!scanOn||session!==scanSession||!v.videoWidth||!window.ZXing||zBusy)return;
+    if(nativeDetector&&Date.now()-scanStartedAt<SCAN_NATIVE_GRACE)return;
+    zBusy=true;
+    try{
+      const k=document.createElement('canvas'),sc=Math.min(1,640/v.videoWidth);
+      k.width=Math.round(v.videoWidth*sc);k.height=Math.round(v.videoHeight*sc);k.getContext('2d').drawImage(v,0,0,k.width,k.height);
+      const f=await zDecode(await loadImg(k.toDataURL('image/jpeg',.82)));if(f)onDetected(f);
+    }catch(e){}finally{zBusy=false}
+  },SCAN_ZXING_INTERVAL);
+  setTorch(true);
+}
+function stopScan(){
+  if(torchOn){try{const t=track();t&&t.applyConstraints({advanced:[{torch:false}]}).catch(()=>{})}catch(e){}torchOn=false}
+  clearInterval(tBd);clearInterval(tZx);tBd=tZx=null;bdBusy=false;scanSession++;
+  if(stream){try{stream.getTracks().forEach(t=>t.stop())}catch(e){}stream=null}
+  try{$('scanVideo').srcObject=null}catch(e){}
+  $('scanArea').classList.add('hidden');scanOn=false;flashLbl();
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&scanOn)stopScan()});
+function onDetected(code){
+  if(!scanOn||!code||Date.now()<cool)return;cool=Date.now()+SCAN_COOLDOWN;stopScan();
+  if(navigator.vibrate)try{navigator.vibrate(100)}catch(e){}
+  onScanned(code);
+}
+async function onScanned(code){
+  if(pcScanId!=null){await pcScanDeliver(code);return}
+  $('searchInput').value=code;
+  try{
+    const r=await api('/api/drug/'+encodeURIComponent(code));
+    if(r.status===404){showUnknown(code);return}
+    chk(r);const d=(await r.json()).drug;
+    addToCart(d,'box',d.price_box);
+    if(navigator.vibrate)try{navigator.vibrate(100)}catch(e){}
+    beep();showToast('تم مسح: '+d.trade_en+' — '+f2(d.price_box)+' ج.م');
+  }catch(e){if(!quiet(e))showMsg('تعذّر البحث بالباركود.')}
+}
+
+/* ---------- add new drug (4 steps, nothing saved until the end) ---------- */
+let unknown='',adStep=1;
+function showUnknown(code){beep(false);unknown=String(code||'').trim();$('unknownCode').textContent=unknown;$('unknownBar').classList.remove('hidden');showMsg('الباركود غير مسجل — يمكنك إضافته الآن.')}
+function openAddDrug(){$('unknownBar').classList.add('hidden');$('adBarcode').value=unknown;showAddStep(1);$('addDrugCard').classList.remove('hidden');$('addDrugCard').scrollIntoView();hideMsg()}
+function closeAddDrug(){$('addDrugCard').classList.add('hidden');unknown='';adStep=1}
+function showAddStep(n){
+  adStep=n;for(let i=1;i<=4;i++)$('adStep'+i).classList.toggle('hidden',i!==n);
+  document.querySelectorAll('#adSteps i').forEach((e,i)=>e.classList.toggle('on',i<n));
+  $('adBackBtn').classList.toggle('hidden',n===1);$('adNextBtn').classList.toggle('hidden',n===4);$('adSaveBtn').classList.toggle('hidden',n!==4);
+  $('addDrugErr').classList.add('hidden');if(n===4)fillReview();
+}
+const adErr=m=>{$('addDrugErr').textContent=m;$('addDrugErr').classList.remove('hidden')};
+function num(id,def){const v=parseFloat(($(id).value||'').trim());return isFinite(v)?v:def}
+function addDrugNext(){
+  if(adStep===1){if(!$('adTradeEn').value.trim()){adErr('الاسم التجاري (إنجليزي) مطلوب.');return}if(!$('adBarcode').value.trim()){adErr('الباركود مطلوب.');return}}
+  if(adStep===3){
+    const buy=num('adBuy',0),sell=num('adSell',NaN),t=$('adDiscType').value,dv=num('adDiscValue',0);
+    if(!(sell>=0)){adErr('سعر البيع مطلوب ويجب أن يكون رقماً.');return}
+    if(buy<0){adErr('سعر الشراء لا يمكن أن يكون سالباً.');return}
+    if(dv<0){adErr('قيمة الخصم لا يمكن أن تكون سالبة.');return}
+    if(t==='percent'&&dv>100){adErr('نسبة الخصم يجب أن تكون بين 0 و 100%.');return}
+    if(t==='amount'&&sell>0&&dv>=sell){adErr('المبلغ الثابت للخصم يجب أن يكون أقل من سعر البيع.');return}
+  }
+  showAddStep(Math.min(4,adStep+1));
+}
+function addDrugBack(){showAddStep(Math.max(1,adStep-1))}
+function fillReview(){
+  const t=$('adDiscType').value,dv=num('adDiscValue',0),v=id=>$(id).value.trim()||'—';
+  const rows=[['الباركود',v('adBarcode')],['الاسم (إنجليزي)',v('adTradeEn')],['الاسم (عربي)',v('adTradeAr')],['المادة الفعالة',v('adScientific')],['الشركة',v('adCompany')],['الشكل',v('adForm')],['التركيز',v('adStrength')],
+    ['سعر الشراء',f2(num('adBuy',0))+' ج.م'],['سعر البيع',f2(num('adSell',0))+' ج.م'],['الحد الأدنى',String(Math.round(num('adMin',5)))],['خصم الدواء',t==='none'?'بدون خصم':t==='percent'?dv+'% خصم':dv+' ج.م خصم']];
+  const r=$('adReview');r.innerHTML='';
+  rows.forEach(x=>{const d=document.createElement('div');d.className='line';const a=document.createElement('span');a.className='muted';a.textContent=x[0];const b=document.createElement('b');b.textContent=x[1];d.append(a,b);r.appendChild(d)});
+}
+async function saveNewDrug(){
+  const g=id=>$(id).value.trim();
+  const body={barcode:g('adBarcode'),trade_en:g('adTradeEn'),trade_ar:g('adTradeAr'),scientific:g('adScientific'),company:g('adCompany'),form:g('adForm'),strength:g('adStrength'),
+    buy_price:num('adBuy',0),sell_price:num('adSell',0),min_stock:Math.round(num('adMin',5)),discount_type:$('adDiscType').value,discount_value:num('adDiscValue',0),
+    strips_per_box:Math.max(1,Math.round(num('adStrips',1))),tablets_per_strip:Math.max(1,Math.round(num('adTablets',1)))};
+  try{
+    const r=await api('/api/drugs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(r.status===401||r.status===429){chk(r);return}
+    const d=await r.json();if(!r.ok){adErr((d&&d.error)||'تعذّر حفظ الدواء.');return}
+    closeAddDrug();$('unknownBar').classList.add('hidden');
+    if((Number(d.drug.stock_units)||0)>0){addToCart(d.drug,'box',d.drug.price_box);showToast('تمت الإضافة: '+d.drug.trade_en)}else{showToast('تمت إضافة «'+d.drug.trade_en+'» — لا يوجد مخزون، أضف الشراء من الكمبيوتر أولاً');$('searchInput').value=d.drug.trade_en;doSearch(d.drug.trade_en)}
+  }catch(e){if(!quiet(e))adErr('تعذّر الاتصال بالكمبيوتر.')}
+}
+
+/* ---------- live poll: only refresh the drugs actually in the cart ---------- */
+let lt=null,lFail=0,lBound=false;
+const sched=ms=>{clearTimeout(lt);lt=setTimeout(pollLive,ms)};
+function stopLivePoll(){clearTimeout(lt);lt=null;lFail=0}
+function setConn(ok){$('connDot').className='dot'+(ok?' on':'');$('connText').textContent=ok?'متصل':'غير متصل';if(ok)$('lastUpdate').textContent=new Date().toTimeString().slice(0,8)}
+async function pollLive(){
+  if(document.hidden){sched(30000);return}
+  try{
+    const ids=[...new Set(cart.map(c=>c.drug_id))];
+    const r=await api('/api/live?ids='+encodeURIComponent(ids.join(',')));chk(r);const d=await r.json(),m={};(d.drugs||[]).forEach(x=>m[x.id]=x);
+    let ch=false;
+    cart.forEach(c=>{const x=m[c.drug_id];if(!x)return;const p=c.unit==='box'?x.price_box:c.unit==='strip'?x.price_strip:x.price_pill;if(p!==c.unit_price){c.unit_price=p;ch=true}const su=Number(x.stock_units)||0;if(su!==c.su){c.su=su;ch=true}});
+    if(ch)renderCart();setConn(true);lFail=0;sched(cart.length?5000:15000);
+  }catch(e){
+    setConn(false);
+    if(e.message==='unauthorized'){stopLivePoll();return}
+    if(e.message==='locked'){stopLivePoll();lt=setTimeout(()=>{startLivePoll();pollLive()},65000);return}
+    lFail++;sched(Math.min(30000,5000*Math.pow(2,lFail)));
+  }
+}
+function startLivePoll(){
+  if(lt)return;
+  if(!lBound){lBound=true;document.addEventListener('visibilitychange',()=>{if(!document.hidden&&PIN)pollLive()});addEventListener('focus',()=>{if(PIN)pollLive()})}
+  sched(5000);
+}
+
+/* ---------- v6.23: PC scan request (add-drug dialog) ---------- */
+let pcPendingId=0,pcScanId=null,pcPollT=null;
+function showPcScan(id){pcPendingId=id;$('pcScanBanner').classList.remove('hidden')}
+function hidePcScan(){pcPendingId=0;$('pcScanBanner').classList.add('hidden')}
+async function pollPcScan(){
+  if(!PIN||document.hidden||pcScanId!=null)return;
+  try{
+    const r=await api('/api/scan-request');chk(r);const d=await r.json();
+    if(d&&d.pending&&d.id)showPcScan(d.id);else hidePcScan();
+  }catch(e){if(!quiet(e)){/* keep polling silently */}}
+}
+function startPcScanPoll(){if(pcPollT)return;pcPollT=setInterval(pollPcScan,3000);pollPcScan()}
+function pcScanStart(){if(!pcPendingId)return;pcScanId=pcPendingId;startScan()}
+async function pcScanDeliver(code){
+  const id=pcScanId;pcScanId=null;hidePcScan();
+  try{
+    const r=await api('/api/scan-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,code:code})});
+    chk(r);showMsg('أُرسل الباركود إلى الكمبيوتر ✔','ok');
+  }catch(e){if(!quiet(e))showMsg('تعذّر إرسال الباركود — أعد الطلب من الكمبيوتر.')}
+}
+
+/* ---------- my invoices & history ---------- */
+async function loadMyInvoices(){
+  const b=$('myInvoices');
+  try{
+    const r=await api('/api/invoices');chk(r);const rows=((await r.json()).invoices||[]).filter(s=>s.source==='mobile');
+    if(!rows.length){b.innerHTML='<p class="muted">لا فواتير اليوم.</p>';return}
+    b.innerHTML='';
+    rows.forEach(s=>{const d=document.createElement('div');d.className='inv';
+      d.innerHTML='<span class="a ltr">'+esc(s.invoice_no)+'</span><span class="c ltr">'+f2(s.total)+' ج.م</span><span class="b">'+esc((s.created_at||s.date||'').replace('T',' '))+'</span><span class="b">'+(s.printed_at?'🖨️ مطبوعة':'⏳ بانتظار الطباعة')+'</span>';
+      b.appendChild(d)});
+  }catch(e){if(!quiet(e))b.innerHTML='<p class="muted">تعذّر تحميل الفواتير.</p>'}
+}
+let hCart=[],hId=null,hCust=null,hOld=0,hPay='cash',hOrig='[]',hOrigDisc=0,hOrigPaid=0,hOrigPay='cash',hPaidTouched=false,hInvNo='';
+async function loadHistory(){
+  const b=$('historyList'),q=$('histSearch').value.trim(),d=$('histDate').value;
+  let u='/api/invoices?history=1';if(q)u+='&q='+encodeURIComponent(q);if(d)u+='&date_from='+d+'&date_to='+d;
+  try{
+    const r=await api(u);chk(r);const rows=(await r.json()).invoices||[];
+    if(!rows.length){b.innerHTML='<p class="muted">لا فواتير.</p>';return}
+    b.innerHTML='';
+    rows.forEach(i=>{const e=document.createElement('div');e.className='inv';
+      e.innerHTML='<span class="a ltr">'+esc(i.invoice_no)+'</span><span class="c ltr">'+f2(i.total)+' ج.م</span><span class="b">'+esc((i.created_at||i.date||'').replace('T',' '))+'</span><span class="b">'+(i.source==='mobile'?'📱':'🖥️')+(i.edited_at?' ✏️':'')+' '+(i.printed_at?'🖨️':'⏳')+'</span>';
+      // v6.19: a direct حذف button per invoice — same confirm box and
+      // same PIN-protected /return endpoint as the all-lines-held flow.
+      if(i.status==='completed'){
+        const rw=document.createElement('div');rw.style.cssText='grid-column:1/-1;display:flex;gap:6px;margin-top:4px';
+        const bt=document.createElement('button');bt.className='btn sec';bt.style.cssText='flex:2;padding:8px;margin:0';bt.textContent='عرض وتعديل';bt.addEventListener('click',()=>openHist(i.id));rw.appendChild(bt);
+        const del=document.createElement('button');del.className='btn red';del.style.cssText='flex:1;padding:8px;margin:0';del.textContent='🗑️ حذف';del.addEventListener('click',()=>askVoidInvoice(i.id,i.invoice_no));rw.appendChild(del);
+        e.appendChild(rw);
+      }else{
+        const st=document.createElement('div');st.style.cssText='grid-column:1/-1;color:var(--err);font-weight:700;font-size:13px;margin-top:4px';st.textContent='مُرجعة ↩️ — رجعت كمياتها للمخزون';e.appendChild(st);
+      }
+      b.appendChild(e)});
+  }catch(e){if(!quiet(e))b.innerHTML='<p class="muted">تعذّر تحميل السجل.</p>'}
+}
+function setHistPay(v){hPay=v;$('histPayMethod').value=v}
+$('histPayMethod').addEventListener('change',()=>{hPay=$('histPayMethod').value;hPaidTouched=false;renderHist()});
+async function openHist(id){
+  try{
+    const r=await api('/api/invoice/'+id);chk(r);const inv=(await r.json()).invoice;
+    if(!inv){showMsg('الفاتورة غير موجودة.');return}
+    if(inv.status!=='completed'){showMsg('لا يمكن تعديل فاتورة مُرجعة.');return}
+    hId=inv.id;hInvNo=inv.invoice_no;hCust=inv.customer_id||null;hOld=Number(inv.total);setHistPay(inv.payment_method||'cash');
+    hCart=(inv.items||[]).map(it=>({drug_id:it.drug_id,name:it.trade_en||it.trade_ar||'',unit:it.pack_level||'box',qty:Number(it.qty_display),unit_price:Number(it.unit_price),held:false,isNew:false,disc:Number(it.line_discount||0)}));
+    hOrig=JSON.stringify(hCart.map(c=>({drug_id:c.drug_id,unit:c.unit,qty:c.qty})));
+    hOrigDisc=Number(inv.discount||0);hOrigPaid=Number(inv.paid == null ? inv.total : inv.paid);hOrigPay=hPay;
+    $('histDetailTitle').textContent='فاتورة '+inv.invoice_no+(inv.edited_at?' ✏️ عُدّلت':'');
+    $('histDiscount').value=inv.discount||0;hPaidTouched=false;
+    $('histDetail').classList.remove('hidden');renderHist();$('histDetail').scrollIntoView();
+  }catch(e){if(!quiet(e))showMsg('تعذّر فتح الفاتورة.')}
+}
+// What the paid box shows until the cashier types: card = total; cash = old paid if it still covers the total; credit = old paid (clamped) or 0.
+function autoPaid(t){if(hPay==='card')return t;if(hPay==='cash')return hOrigPaid>t?hOrigPaid:t;return hOrigPay==='credit'?Math.min(hOrigPaid,t):0}
+const hLine=c=>r2(c.qty*c.unit_price-(c.disc||0));
+const hTotal=()=>r2(hCart.filter(c=>!c.held).reduce((s,c)=>s+hLine(c),0));
+function renderHist(){
+  $('histConfirm').classList.add('hidden');
+  const b=$('histLines');b.innerHTML='';
+  hCart.forEach((c,i)=>{
+    const d=document.createElement('div');d.className='line'+(c.held?' held':'');
+    const l=document.createElement('div');
+    const n=document.createElement('div');n.className='n';n.textContent=(c.held?'⏳ محذوف مؤقتاً — ':'')+c.name+' — '+L(c.unit);
+    const p=document.createElement('div');p.className='p';
+    p.innerHTML='<span class="ltr">'+f2(c.unit_price)+'</span> × <span class="ltr">'+c.qty+'</span>'+(c.disc>0?' — خصم <span class="ltr">'+f2(c.disc)+'</span>':'')+' = <b class="ltr">'+f2(hLine(c))+'</b> ج.م';
+    l.append(n,p);
+    if(c.held){const h=document.createElement('div');h.style.cssText='color:var(--warn);font-weight:700;font-size:13px';h.textContent='لن يُحذف إلا بعد الاعتماد';l.appendChild(h)}
+    const q=document.createElement('div');q.className='qty';
+    const mk=(t,fn,x)=>{const e=document.createElement('button');e.textContent=t;if(x)e.className='x';e.addEventListener('click',fn);q.appendChild(e)};
+    if(c.held)mk('↩️ استرجاع',()=>{c.held=false;if(!(c.qty>0))c.qty=c.heldQty||1;renderHist()},1);
+    else{mk('+',()=>hQty(i,1));mk('−',()=>hQty(i,-1));mk('🗑️',()=>{c.heldQty=c.qty;c.held=true;renderHist()},1)}
+    d.append(l,q);b.appendChild(d);
+  });
+  const disc=parseFloat($('histDiscount').value||0)||0,tot=r2(Math.max(0,hTotal()-disc)),diff=r2(tot-hOld);
+  const hp=$('histPaid');hp.style.display=hPay==='card'?'none':'block';hp.placeholder=hPay==='credit'?'المدفوع الآن (فارغ = 0)':'المدفوع';if(!hPaidTouched)hp.value=r2(autoPaid(tot));
+  const held=hCart.filter(c=>c.held).reduce((s,c)=>s+hLine(c),0);
+  $('histDiff').textContent='المحفوظ '+f2(hOld)+' ← الجديد '+f2(tot)+' ج.م — الفرق '+f2(diff)+(diff>0?' (يُحصَّل)':diff<0?' (يُرد)':' (لا فرق)')+(held>0?' — محذوف مؤقتاً '+f2(held):'');
+}
+function hQty(i,x){
+  const c=hCart[i],nq=c.qty+x;
+  if(nq<=0){c.heldQty=c.qty;c.held=true}
+  else if(c.isNew){c.qty=nq;c.disc=defDisc(c.dt,c.dv,c.unit_price,nq)}
+  else{if(c.qty>0&&c.disc>0)c.disc=r2(c.disc*nq/c.qty);c.qty=nq}
+  renderHist();
+}
+async function histSearchAdd(){
+  const q=$('histAddInput').value.trim();if(!q)return;
+  try{
+    const r=await api('/api/drugs?q='+encodeURIComponent(q));chk(r);const d=await r.json(),b=$('histAddResults');b.innerHTML='';
+    b.appendChild(drugCards((d.drugs||[]).slice(0,5),(x,unit,price)=>{
+      const f=hCart.find(c=>c.drug_id===x.id&&c.unit===unit);
+      if(f){f.held=false;hQty(hCart.indexOf(f),1)}else{hCart.push({drug_id:x.id,name:x.trade_en,unit,qty:1,unit_price:price,held:false,isNew:true,dt:x.discount_type,dv:x.discount_value,disc:defDisc(x.discount_type,x.discount_value,price,1)});renderHist()}
+    }));
+  }catch(e){if(!quiet(e))showMsg('تعذّر البحث.')}
+}
+function hMsg(t,k){const m=$('histMsg');m.textContent=t;m.className='msg '+(k||'err');m.scrollIntoView({block:'center'})}
+let pendingEdit=null,hSaving=false;
+// v6.19: direct delete — from the per-row 🗑️ in the list (id+no given)
+// or from the 🗑️ inside the open invoice (no args = current invoice).
+// Same confirm box and same POST /return as the all-lines-held flow.
+function askVoidInvoice(id,no){
+  const vid=id||hId;if(!vid||hSaving)return;
+  const vno=no||hInvNo||'';
+  pendingEdit={id:vid,voidAll:true,fromList:!!id};
+  $('histSummary').textContent='⚠️ حذف الفاتورة '+vno+' = إلغاؤها بالكامل.\nكل الكميات ترجع للمخزون، وأي دين آجل على الفاتورة يتلغى، وحالتها تصبح «مُرجعة».\nلا يمكن التراجع عن الإلغاء.';
+  $('histOk').textContent='🗑️ تأكيد إلغاء الفاتورة';
+  const c=$('histConfirm');c.classList.remove('hidden');c.scrollIntoView({block:'center'});
+}
+function saveHistoryEdit(){
+  if(!hId||hSaving)return;
+  $('histMsg').className='msg';
+  const act=hCart.filter(c=>!c.held),heldL=hCart.filter(c=>c.held);
+  // v6.17: deleting EVERY line is not an edit — an empty invoice can
+  // never be saved. It means "cancel the whole invoice", so ask
+  // explicitly and run a full return (stock back, credit reversed)
+  // instead of the old dead-end banner that looked like a dead button.
+  if(!act.length){
+    if(hCart.length){
+      pendingEdit={id:hId,voidAll:true};
+      $('histSummary').textContent='⚠️ حذف كل الأصناف = إلغاء الفاتورة بالكامل.\nكل الكميات ترجع للمخزون، وأي دين آجل على الفاتورة يتلغى، وحالتها تصبح «مُرجعة».\nلا يمكن التراجع عن الإلغاء.';
+      $('histOk').textContent='🗑️ تأكيد إلغاء الفاتورة';
+      const c=$('histConfirm');c.classList.remove('hidden');c.scrollIntoView({block:'center'});
+    }else hMsg('الفاتورة فارغة.');
+    return;
+  }
+  const disc=parseFloat($('histDiscount').value||0)||0,t=r2(Math.max(0,hTotal()-disc)),raw=$('histPaid').value.trim();
+  // paid=null lets the server decide (cash/card = new total) so cents never disagree with the phone's estimate.
+  let pv=null;
+  if(hPay!=='card'){
+    if(hPaidTouched){if(raw!=='')pv=parseFloat(raw)}
+    else{const a=autoPaid(t);if(hPay==='credit'||a>t)pv=a}
+  }
+  if(pv!==null&&(!isFinite(pv)||pv<0)){hMsg('المبلغ المدفوع غير صالح.');return}
+  if(pv!==null&&hPay==='cash'&&pv<t-0.005){hMsg('المدفوع أقل من الإجمالي الجديد ('+f2(t)+' ج.م) — اكتب مبلغاً لا يقل عنه أو اختر «آجل».');return}
+  if(pv!==null&&hPay==='credit'&&pv>t+0.005){hMsg('المدفوع أكبر من الإجمالي الجديد ('+f2(t)+' ج.م).');return}
+  const om={};try{JSON.parse(hOrig).forEach(o=>om[o.drug_id+'|'+o.unit]=o.qty)}catch(e){}
+  const sm=[];
+  heldL.forEach(c=>sm.push('🗑️ حذف: '+c.name+' — '+L(c.unit)+' x'+c.qty+' = '+f2(c.qty*c.unit_price)+' ج.م'));
+  act.forEach(c=>{const k=c.drug_id+'|'+c.unit;if(!(k in om))sm.push('➕ إضافة: '+c.name+' — '+L(c.unit)+' x'+c.qty);else if(c.qty!==om[k])sm.push('🔢 كمية '+c.name+': من x'+om[k]+' إلى x'+c.qty)});
+  if(disc!==hOrigDisc)sm.push('💸 الخصم: من '+f2(hOrigDisc)+' إلى '+f2(disc));
+  if(pv!==null&&Math.abs(pv-hOrigPaid)>0.005)sm.push('💵 المدفوع: من '+f2(hOrigPaid)+' إلى '+f2(pv));
+  if(hPay!==hOrigPay)sm.push('💳 طريقة الدفع تغيّرت');
+  if(!sm.length){hMsg('لا توجد تغييرات لاعتمادها.');return}
+  const nt=Math.max(0,hTotal()-disc),diff=nt-hOld;
+  $('histOk').textContent='✅ تأكيد الاعتماد';
+  pendingEdit={id:hId,body:{items:act.map(c=>c.isNew?{drug_id:c.drug_id,unit:c.unit,qty:c.qty}:{drug_id:c.drug_id,unit:c.unit,qty:c.qty,discount:c.disc||0}),discount:disc,payment:hPay,customer_id:hCust,paid:pv,approved:true,
+    deleted_items:heldL.map(c=>({drug_id:c.drug_id,unit:c.unit,qty:c.qty}))}};
+  $('histSummary').textContent=sm.join('\n')+'\n\nالمحفوظ: '+f2(hOld)+' ج.م\nالجديد: '+f2(nt)+' ج.م\nالفرق: '+f2(diff)+' ج.م'+(diff>0?' (يُحصَّل)':diff<0?' (يُرد)':' (لا فرق)');
+  const c=$('histConfirm');c.classList.remove('hidden');c.scrollIntoView({block:'center'});
+}
+async function doHistSave(){
+  if(!pendingEdit||hSaving)return;
+  hSaving=true;const btn=$('histOk');btn.textContent='جارٍ الحفظ…';btn.disabled=true;
+  const voidAll=!!pendingEdit.voidAll,fromList=!!pendingEdit.fromList;
+  try{
+    const r=await api('/api/invoices/'+pendingEdit.id+(voidAll?'/return':'/edit'),
+      voidAll?{method:'POST'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pendingEdit.body)});
+    chk(r);let d={};try{d=await r.json()}catch(e){}
+    if(!r.ok){$('histConfirm').classList.add('hidden');(fromList?showMsg:hMsg)((d&&d.error)||(voidAll?'تعذّر إلغاء الفاتورة (رمز ':'تعذّر حفظ التعديل (رمز ')+r.status+').');return}
+    const vid=pendingEdit.id;
+    pendingEdit=null;showToast(voidAll?'أُلغيت الفاتورة (إرجاع كامل)':'تم التعديل — الجديد: '+f2(d.new_total)+' ج.م');
+    // deleting from the list while ANOTHER invoice is open keeps that
+    // invoice's unstaged edits — only hide the confirm box there.
+    if(!fromList||hId===vid)closeHistDetail(true);else $('histConfirm').classList.add('hidden');
+    loadHistory();pollLive();
+  }catch(e){if(!quiet(e)){$('histConfirm').classList.add('hidden');(fromList?showMsg:hMsg)('تعذّر الاتصال بالكمبيوتر.')}}
+  finally{hSaving=false;btn.textContent='✅ تأكيد الاعتماد';btn.disabled=false}
+}
+function closeHistDetail(force){
+  if(!force&&hCart.some(c=>c.held)&&!confirm('فيه أصناف محذوفة مؤقتاً لم تُعتمد — الإغلاق يلغي الحذف نهائياً؟'))return;
+  $('histDetail').classList.add('hidden');$('histConfirm').classList.add('hidden');$('histMsg').className='msg';pendingEdit=null;hId=null;hInvNo='';hCust=null;hCart=[];hOrig='[]';
+}
+$('histSearch').addEventListener('input',()=>{clearTimeout(window._ht);window._ht=setTimeout(loadHistory,400)});
+$('histDiscount').addEventListener('input',renderHist);
+$('histPaid').addEventListener('input',()=>{hPaidTouched=true;$('histConfirm').classList.add('hidden')});
+$('paidInput').addEventListener('input',updateChange);
+$('adForm').addEventListener('input',()=>{const bo=boxOnly({form:$('adForm').value});['adStrips','adTablets'].forEach(i=>{$(i).disabled=bo;if(bo)$(i).value=1})});
+const inField=e=>/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'');
+['copy','cut','contextmenu','dragstart'].forEach(t=>document.addEventListener(t,e=>{if(!inField(e))e.preventDefault()}));
+$('pinInput').addEventListener('input',()=>{if(/^\d{6}$/.test($('pinInput').value.trim()))savePin()});
+try{updateHttpsBanner()}catch(e){}
+if(PIN)enterApp();else try{$('pinInput').focus()}catch(e){}
+</script>
+</body>
+</html>

@@ -1137,6 +1137,7 @@ class DB:
             self._link_barcode_checked(c, fields["barcode"], drug_id)
         if _commit:
             self.conn.commit()
+            self._cloud_push_async(drug_id)
         return drug_id
 
     @_atomic
@@ -1155,6 +1156,36 @@ class DB:
              float(fields.get("discount_value") or 0), drug_id))
         if _commit:
             self.conn.commit()
+            self._cloud_push_async(drug_id)
+
+    # ---------- cloud sync (v6.11) ----------
+    def _cloud_push_async(self, drug_id):
+        """رفع الصنف للسحابة بعد أي إضافة/تعديل — أفضل جهد ولا يوقف
+        البرنامج إطلاقاً: يعمل في خيط منفصل باتصال خاص (اتصالات SQLite
+        لا تُشارك بين الخيوط)، ولا يفعل شيئاً إن لم يُضبط إعداد Supabase
+        أو أثناء السحب من السحابة (_cloud_mute). أي فشل يُسجَّل في
+        إعداد cloud_last_error ويظهر في شاشة الإعدادات."""
+        if getattr(self, "_cloud_mute", False):
+            return
+        try:
+            import cloud_sync
+            import supabase_client
+        except Exception:
+            return
+        if not supabase_client.is_configured():
+            return
+        path = self.path
+
+        def worker():
+            try:
+                db = DB(path=path, init=False)
+                try:
+                    cloud_sync.push_drug_safe(db, drug_id)
+                finally:
+                    db.close()
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
 
     # ---------- stock / batches / FEFO ----------
     def batches_for(self, drug_id):
@@ -1311,7 +1342,22 @@ class DB:
                 raise ValueError("الكمية يجب أن تكون عدداً صحيحاً (بدون كسور) — حتى للحبة الواحدة")
             if it["pack_level"] not in allowed_units(drug):
                 raise ValueError("الوحدة %s غير متاحة لهذا الشكل الصيدلاني" % it["pack_level"])
-            up = unit_price(drug, it["pack_level"])
+            # v6.16: an explicit "unit_price" on the line is the price
+            # the cashier SAW for that line (the phone invoice-edit
+            # flow prices existing lines at what they were sold at —
+            # see edit_sale_from_items). Without it the edit silently
+            # re-priced old lines at TODAY'S catalog price after any
+            # price update: the phone showed one total, the server
+            # saved another, and cash approvals could be rejected with
+            # "المدفوع أقل من الإجمالي". No create path sends this key,
+            # so selling prices stay catalog-driven.
+            if it.get("unit_price") is not None:
+                try:
+                    up = float(it["unit_price"])
+                except (TypeError, ValueError):
+                    raise ValueError("سعر بيع غير صالح للدواء %s" % drug.get("trade_en", ""))
+            else:
+                up = unit_price(drug, it["pack_level"])
             if up < 0 or not math.isfinite(up):
                 raise ValueError("سعر بيع غير صالح للدواء %s" % drug.get("trade_en", ""))
             qty_units = units_for_qty(drug, it["pack_level"], qty_disp)
@@ -1593,6 +1639,60 @@ class DB:
             ORDER BY si.id""", (sale_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    @staticmethod
+    def group_sale_items(items):
+        """v6.10: group split FEFO rows into ONE display line per
+        (drug_id, pack_level, unit_price).
+
+        create_sale writes one sale_items row per batch allocation, so
+        a drug sold from 2 batches has 2 rows for the same drug+unit.
+        The raw rows stay in the DB (FEFO/restock accounting must not
+        change); only the DISPLAY/EDIT view is grouped. Sums:
+        qty_display, qty_units, line_total, line_discount. unit_price
+        is the same on every split row; buy_price_unit is the
+        qty-weighted average across the split rows, so profit shown
+        for the grouped line is correct. batch_id is None: a grouped
+        line is not one batch.
+        """
+        grouped = {}
+        order = []
+        for item in items:
+            key = (item.get("drug_id"), item.get("pack_level"),
+                   float(item.get("unit_price") or 0))
+            cur = grouped.get(key)
+            if cur is None:
+                cur = dict(item)
+                cur["batch_id"] = None
+                cur["_w_buy"] = float(cur.get("buy_price_unit") or 0) * int(
+                    cur.get("qty_units") or 0)
+                grouped[key] = cur
+                order.append(cur)
+                continue
+            qty = int(item.get("qty_units") or 0)
+            cur["_w_buy"] += float(item.get("buy_price_unit") or 0) * qty
+            cur["qty_display"] = _round(
+                float(cur.get("qty_display") or 0) +
+                float(item.get("qty_display") or 0))
+            cur["qty_units"] = int(cur.get("qty_units") or 0) + qty
+            cur["line_total"] = _round(
+                float(cur.get("line_total") or 0) +
+                float(item.get("line_total") or 0))
+            cur["line_discount"] = _round(
+                float(cur.get("line_discount") or 0) +
+                float(item.get("line_discount") or 0))
+        for cur in order:
+            units = int(cur.get("qty_units") or 0)
+            cur["buy_price_unit"] = _round(cur.pop("_w_buy") / units) if units else 0.0
+        return order
+
+    def get_grouped_sale_items(self, sale_id):
+        """v6.10: the invoice lines as the user sees/edits them — one
+        line per drug+unit, split FEFO rows merged (see group_sale_items).
+        Use this for invoice detail, invoice editing and receipts.
+        get_sale_items() keeps returning the raw split rows for
+        restock/return accounting."""
+        return self.group_sale_items(self.get_sale_items(sale_id))
+
     @_atomic
     def return_sale(self, sale_id, user, return_shift_id=None,
                     refund_method=None, reason=""):
@@ -1603,7 +1703,9 @@ class DB:
         history is never retroactively changed. return_shift_id=None
         means "same shift as the sale" (old callers, backfill-compatible).
         Raises ValueError on an unknown sale / already-returned sale /
-        unknown returning shift."""
+        unknown returning shift. Writes sale_returns + audit_log in the
+        same atomic transaction (v6.19 — every void is logged, from the
+        PC dialog, the invoices list, or the mobile delete button)."""
         c = self.conn.cursor()
         sale = c.execute("SELECT * FROM sales WHERE id=?", (sale_id,)).fetchone()
         if not sale or sale["status"] != "completed":
@@ -1650,6 +1752,12 @@ class DB:
             (sale_id, sale["invoice_no"], return_shift_id, user, _now(),
              refund_method or sale["payment_method"],
              _cash_refund(sale), reason or ""))
+        # v6.19: every void is audit-logged inside the SAME transaction
+        # (PC dialog, invoices list, mobile delete button — all callers).
+        c.execute(
+            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
+            (user or "", "return_sale",
+             sale["invoice_no"] + ((" — " + reason) if reason else ""), _now()))
         self.conn.commit()
 
     def sale_returns_for_shift(self, shift_id):
@@ -1806,6 +1914,19 @@ class DB:
         unknown unit raises instead of silently becoming a box."""
         if not isinstance(items_spec, list):
             raise ValueError("بيانات أصناف غير صالحة")
+        # v6.16: prices of lines ALREADY on the invoice, so an edit
+        # keeps what the phone screen shows (the invoice's saved
+        # prices) instead of silently re-pricing at today's catalog.
+        # Split FEFO rows of one line share one price; last wins is
+        # fine. A missing invoice yields an empty map and edit_sale()
+        # itself raises "الفاتورة غير موجودة".
+        saved_price = {}
+        try:
+            for _r in self.get_sale_items(sale_id):
+                saved_price[(int(_r["drug_id"]),
+                             str(_r["pack_level"] or "box"))] = float(_r["unit_price"] or 0)
+        except Exception:
+            saved_price = {}
         items = []
         for spec in items_spec:
             if not isinstance(spec, dict):
@@ -1828,6 +1949,12 @@ class DB:
             if qty <= 0:
                 continue
             spec_item = {"drug": drug, "pack_level": unit, "qty_display": qty}
+            # v6.16: a line that was already on the invoice keeps the
+            # price it was sold at; only genuinely NEW lines get
+            # today's catalog price.
+            _saved = saved_price.get((drug_id, unit))
+            if _saved is not None:
+                spec_item["unit_price"] = _saved
             # v6.8: honour the explicit per-line discount (TOTAL for the
             # line) exactly like create_sale_from_items() does. It used
             # to be dropped here, so every phone edit silently re-priced
@@ -1849,26 +1976,7 @@ class DB:
         sale = self.get_sale(sale_id)
         if not sale:
             return None
-        items = self.get_sale_items(sale_id)
-        display_items = []
-        grouped_items = {}
-        for item in items:
-            key = (item["drug_id"], item["pack_level"],
-                   float(item["unit_price"] or 0))
-            current = grouped_items.get(key)
-            if current is None:
-                current = dict(item)
-                current["batch_id"] = None
-                grouped_items[key] = current
-                display_items.append(current)
-                continue
-            current["qty_display"] = _round(
-                float(current["qty_display"] or 0) + float(item["qty_display"] or 0))
-            current["qty_units"] = int(current["qty_units"] or 0) + int(item["qty_units"] or 0)
-            current["line_total"] = _round(
-                float(current["line_total"] or 0) + float(item["line_total"] or 0))
-            current["line_discount"] = _round(
-                float(current["line_discount"] or 0) + float(item["line_discount"] or 0))
+        display_items = self.get_grouped_sale_items(sale_id)
         cust = ""
         if sale.get("customer_id"):
             row = self.conn.execute("SELECT name FROM customers WHERE id=?",
@@ -2438,6 +2546,33 @@ class DB:
         rows = self.conn.execute(
             "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    def audit_query(self, text="", action="", user="", limit=200):
+        """v6.13: سجل التدقيق بفلاتر — نص حر (في التفاصيل أو المستخدم)،
+        نوع الإجراء، المستخدم، وحد أقصى للصفوف (الأحدث أولاً)."""
+        sql = "SELECT * FROM audit_log WHERE 1=1"
+        args = []
+        if text:
+            sql += " AND (details LIKE ? OR user LIKE ?)"
+            args += ["%" + text + "%", "%" + text + "%"]
+        if action:
+            sql += " AND action=?"
+            args.append(action)
+        if user:
+            sql += " AND user=?"
+            args.append(user)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
+
+    def audit_actions(self):
+        """أنواع الإجراءات الموجودة فعلاً في السجل (لقائمة الفلتر)."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT action FROM audit_log ORDER BY action").fetchall()
+        return [r[0] for r in rows]
+
+    def audit_count(self):
+        return self.conn.execute("SELECT COUNT(*) c FROM audit_log").fetchone()["c"]
 
     # ---------- CSV import / export / backup ----------
     def export_drugs_csv(self, path):

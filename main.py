@@ -262,7 +262,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.22", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.23", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -496,7 +496,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.22 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.23 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         # v6.20: screen-aware default size + sensible minimum + the
         # window reopens with the size, position and maximized state it
@@ -2039,6 +2039,19 @@ class App:
                 cb.pack(padx=12)
                 cb.set(val)
                 fields[key] = cb
+            elif key == "barcode":
+                # v6.23: زر «📷 مسح» بجانب خانة الباركود — يفتح نافذة تمسح
+                # بماسح USB (يكتب كلوحة مفاتيح) أو بكاميرا الموبايل عبر
+                # سيرفر الموبايل، والنتيجة تملأ الخانة مباشرة.
+                _bc_row = tk.Frame(_form, bg=self.pal["bg"])
+                _bc_row.pack(fill="x", padx=12)
+                ent = ttk.Entry(_bc_row, width=46)
+                ent.pack(side="right", fill="x", expand=True)
+                ent.insert(0, val)
+                ttk.Button(_bc_row, text="📷 مسح", style="Accent.TButton",
+                           command=lambda e=ent: self._barcode_scan_dialog(e)).pack(
+                               side="left", padx=(0, 6))
+                fields[key] = ent
             else:
                 ent = ttk.Entry(_form, width=46)
                 ent.pack(padx=12)
@@ -2127,6 +2140,124 @@ class App:
             tree.insert("", "end", values=(b["batch_no"], b["expiry"], b["qty_units"], money(b["buy_price_unit"])))
         ttk.Label(win, text="البيع يأخذ دائماً من أقرب تشغيلة تنتهي أولاً (FEFO).",
                   style="Muted.TLabel").pack(pady=4)
+
+    def _barcode_scan_dialog(self, target):
+        """v6.23: نافذة «مسح باركود» تملأ خانة باركود العلبة بطريقتين:
+        1) ماسح USB: يتصرّف كلوحة مفاتيح — امسح داخل الخانة واضغط Enter.
+        2) كاميرا الموبايل: يفتح طلب مسح عبر سيرفر الموبايل؛ صفحة الموبايل
+        تعرض تنبيهاً «الكمبيوتر يطلب مسح باركود»، والمسح بالكاميرا يرسل
+        الكود هنا وتُملأ الخانة تلقائياً."""
+        win = tk.Toplevel(self.root)
+        win.title("📷 مسح باركود العلبة")
+        win.transient(self.root)
+        win.configure(bg=self.pal["bg"])
+        ui_theme.fit_dialog(win, 520, 430)
+        body = tk.Frame(win, bg=self.pal["bg"], padx=16, pady=14)
+        body.pack(fill="both", expand=True)
+
+        state = {"rid": None, "job": None}
+
+        def _fill_and_close(code):
+            code = (code or "").strip()
+            if not code:
+                return
+            try:
+                target.delete(0, "end")
+                target.insert(0, code)
+            except Exception:
+                pass
+            _close()
+            self.show_banner("تم مسح الباركود: %s" % code, "success")
+
+        # --- ١) ماسح USB (لوحة مفاتيح) ---
+        ttk.Label(body, text="١) ماسح الباركود (USB)",
+                  font=("Segoe UI", 13, "bold"),
+                  background=self.pal["bg"], foreground=self.pal["text"]).pack(anchor="w")
+        ttk.Label(body, text="الماسح يكتب مثل لوحة المفاتيح — المؤشر جاهز بالأسفل، امسح الآن.",
+                  font=("Segoe UI", 10), background=self.pal["bg"],
+                  foreground=self.pal["muted"], wraplength=470,
+                  justify="right").pack(anchor="w", pady=(0, 4))
+        usb_entry = ttk.Entry(body, font=("Segoe UI", 14))
+        usb_entry.pack(fill="x", pady=(0, 4))
+        usb_entry.bind("<Return>", lambda _e: _fill_and_close(usb_entry.get()))
+        usb_entry.focus_set()
+
+        tk.Frame(body, bg=self.pal["border"], height=1).pack(fill="x", pady=12)
+
+        # --- ٢) كاميرا الموبايل ---
+        ttk.Label(body, text="٢) كاميرا الموبايل",
+                  font=("Segoe UI", 13, "bold"),
+                  background=self.pal["bg"], foreground=self.pal["text"]).pack(anchor="w")
+        status_lbl = ttk.Label(body, text="اطلب المسح ثم امسح من صفحة الموبايل — سيظهر الكود هنا.",
+                               font=("Segoe UI", 10), background=self.pal["bg"],
+                               foreground=self.pal["muted"], wraplength=470,
+                               justify="right")
+        status_lbl.pack(anchor="w", pady=(0, 6))
+
+        def _poll_phone():
+            rid = state["rid"]
+            if rid is None:
+                return
+            try:
+                res = mobile_server.scan_request_poll(rid) if mobile_server else None
+            except Exception:
+                res = None
+            if not res:
+                status_lbl.config(text="تعذّر قراءة حالة الطلب — أعد المحاولة.")
+                state["rid"] = None
+                return
+            if res.get("code"):
+                _fill_and_close(res["code"])
+                return
+            if not res.get("pending"):
+                status_lbl.config(text="انتهت مهلة الطلب — اضغط الزر من جديد.")
+                state["rid"] = None
+                return
+            state["job"] = win.after(1000, _poll_phone)
+
+        def _request_phone_scan():
+            srv = getattr(self, "mobile_server", None)
+            if srv is None or not getattr(srv, "running", False):
+                status_lbl.config(
+                    text="سيرفر الموبايل متوقف — شغّله أولاً من تبويب «📱 موبايل».")
+                return
+            try:
+                state["rid"] = mobile_server.scan_request_open()
+            except Exception:
+                status_lbl.config(text="تعذّر فتح طلب المسح — أعد المحاولة.")
+                return
+            status_lbl.config(text="افتح صفحة الموبايل — سيظهر تنبيه «الكمبيوتر يطلب مسح باركود»…")
+            if state["job"]:
+                try:
+                    win.after_cancel(state["job"])
+                except Exception:
+                    pass
+            state["job"] = win.after(1000, _poll_phone)
+
+        ttk.Button(body, text="📱 اطلب المسح من الموبايل", style="Accent.TButton",
+                   command=_request_phone_scan).pack(anchor="w")
+
+        def _close():
+            if state["job"]:
+                try:
+                    win.after_cancel(state["job"])
+                except Exception:
+                    pass
+                state["job"] = None
+            if state["rid"] is not None and mobile_server:
+                try:
+                    mobile_server.scan_request_cancel(state["rid"])
+                except Exception:
+                    pass
+                state["rid"] = None
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        win.protocol("WM_DELETE_WINDOW", _close)
+        ttk.Button(body, text="إلغاء", style="TButton",
+                   command=_close).pack(side="left", pady=(14, 0))
 
     def adjust_stock_dialog(self):
         d = self._selected_inv_drug()
