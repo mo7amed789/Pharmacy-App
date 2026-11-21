@@ -88,7 +88,7 @@ class TestTheme(unittest.TestCase):
         self.assertGreaterEqual(int(m.group(1)), 36)
 
     def test_version_bumped(self):
-        self.assertIn("Pharmacy Enterprise v6.24", self.main_src)
+        self.assertIn("Pharmacy Enterprise v6.25", self.main_src)
         self.assertNotIn("Pharmacy Enterprise v6.14", self.main_src)
 
     def test_login_uses_saved_theme(self):

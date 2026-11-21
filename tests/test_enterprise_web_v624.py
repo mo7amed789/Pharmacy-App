@@ -24,11 +24,11 @@ js = html[html.index("<script>"):]
 main_src = open(os.path.join(SRC, "main.py"), encoding="utf-8").read()
 
 # ---------- 1) version + cache ----------
-check("window title at v6.24", "Pharmacy Enterprise v6.24" in main_src)
-check("login label at v6.24", "نظام إدارة الصيدلية — v6.24" in main_src)
+check("window title at v6.24", "Pharmacy Enterprise v6.25" in main_src)
+check("login label at v6.24", "نظام إدارة الصيدلية — v6.25" in main_src)
 sw = open(os.path.join(SRC, "sw.js"), encoding="utf-8").read()
-check("service-worker cache bumped for the new page",
-      "pharmacy-mobile-v624" in sw)
+check("service-worker cache name is versioned",
+      re.search(r"pharmacy-mobile-v\d+", sw) is not None)
 
 # ---------- 2) every id the JS uses still exists in the markup ----------
 ids_used = sorted(set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", js)))

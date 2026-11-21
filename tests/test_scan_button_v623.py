@@ -28,10 +28,10 @@ def check(name, cond, extra=""):
 
 # ---------- 1) structural: desktop dialog ----------
 main_src = open(os.path.join(SRC, "main.py"), encoding="utf-8").read()
-check("window title at current version (v6.24)",
-      "Pharmacy Enterprise v6.24" in main_src)
-check("login label at current version (v6.24)",
-      "نظام إدارة الصيدلية — v6.24" in main_src)
+check("window title at current version (v6.25)",
+      "Pharmacy Enterprise v6.25" in main_src)
+check("login label at current version (v6.25)",
+      "نظام إدارة الصيدلية — v6.25" in main_src)
 check("scan dialog method exists", "_barcode_scan_dialog" in main_src)
 check("scan button beside the barcode field",
       'text="📷 مسح"' in main_src and "self._barcode_scan_dialog(e)" in main_src)
