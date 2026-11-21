@@ -786,3 +786,88 @@ def setup_main_window(root, db):
         root.protocol("WM_DELETE_WINDOW", _save_and_close)
     except Exception:
         pass
+
+
+def fit_dialog(win, w, h, margin_x=60, margin_y=110):
+    """v6.22: cap a dialog to the real screen and centre it.
+
+    A fixed ``geometry("480x900")`` clips off-screen on small laptops
+    and at 125%/150% display scaling; this keeps the requested size
+    when it fits and shrinks/centres it when it does not.  Returns the
+    applied (width, height).
+    """
+    try:
+        win.update_idletasks()
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        w = min(int(w), max(sw - margin_x, 400))
+        h = min(int(h), max(sh - margin_y, 320))
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        win.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        return w, h
+    except Exception:
+        try:
+            win.geometry("%dx%d" % (int(w), int(h)))
+        except Exception:
+            pass
+        return w, h
+
+
+def dialog_form_area(win, theme_name="light"):
+    """v6.22: scrollable form area + an always-visible footer.
+
+    Returns (body, footer).  Pack form fields into ``body`` and action
+    buttons into ``footer``; the footer is pinned to the bottom of the
+    window, so the action button can never be pushed off-screen no
+    matter how tall the form is or how small the screen is.
+    """
+    p = palette(theme_name)
+    footer = ttk.Frame(win)
+    footer.pack(side="bottom", fill="x", padx=10, pady=(6, 10))
+    canvas = tk.Canvas(win, bg=p["bg"], highlightthickness=0, bd=0)
+    vbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=vbar.set)
+    vbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+    body = ttk.Frame(canvas)
+    body_id = canvas.create_window((0, 0), window=body, anchor="nw")
+
+    def _conf(_e=None):
+        try:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(body_id, width=canvas.winfo_width(),
+                              height=max(canvas.winfo_height(),
+                                         body.winfo_reqheight()))
+        except Exception:
+            pass
+
+    body.bind("<Configure>", _conf)
+    canvas.bind("<Configure>", _conf)
+
+    def _is_inside(widget):
+        w = widget
+        while w is not None:
+            if w is win:
+                return True
+            w = getattr(w, "master", None)
+        return False
+
+    def _on_wheel(e):
+        try:
+            if not win.winfo_exists():
+                return
+            if not _is_inside(e.widget):
+                return
+            if getattr(e, "delta", 0):
+                canvas.yview_scroll(int(-e.delta / 120), "units")
+        except Exception:
+            pass
+
+    # No unbind on close: unbind_all would also remove the main tabs'
+    # wheel bindings.  Closed dialogs no-op through winfo_exists above.
+    try:
+        canvas.bind_all("<MouseWheel>", _on_wheel)
+    except Exception:
+        pass
+    return body, footer

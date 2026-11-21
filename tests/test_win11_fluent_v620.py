@@ -174,8 +174,8 @@ class TestWindowSizing(unittest.TestCase):
         self.assertIn("def center_window(", self.src)
 
     def test_version_bumped(self):
-        self.assertIn("Pharmacy Enterprise v6.21", self.main_src)
-        self.assertIn("نظام إدارة الصيدلية — v6.21", self.main_src)
+        self.assertIn("Pharmacy Enterprise v6.22", self.main_src)
+        self.assertIn("نظام إدارة الصيدلية — v6.22", self.main_src)
 
 
 if __name__ == "__main__":
