@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Pharmacy Enterprise v6.18 — UI theme module (stdlib only: Tkinter/ttk).
+Pharmacy Enterprise v6.20 — UI theme module (stdlib only: Tkinter/ttk).
 
 One place for the whole look: colours, fonts, card/banner helpers and
 Treeview striping.  Business logic, database and forecasting are NOT
@@ -17,14 +17,54 @@ colour language (success/warning/danger/info/muted) with a pill label
 helper and Treeview status tags, and helpers so no screen hardcodes its
 own hex colours anymore.
 
-Windows fonts first (Segoe UI), with Tahoma / DejaVu Sans as fallbacks
-so the same file also renders on Linux during smoke tests.
+Windows fonts first (Segoe UI Variable on Windows 11, then Segoe UI),
+with Tahoma / DejaVu Sans as fallbacks so the same file also renders on
+Linux during smoke tests.
 """
 import tkinter as tk
 from tkinter import ttk
 
 FONT_FAMILY = "Segoe UI"
-FALLBACK_FAMILIES = ("Segoe UI", "Tahoma", "DejaVu Sans")
+# v6.20: Windows 11 ships "Segoe UI Variable" — a modernised cut of the
+# same face.  resolve_font_family() picks the best installed option at
+# startup and keeps the module-level default as the safe fallback.
+FONT_FAMILIES_PREFERRED = ("Segoe UI Variable Text", "Segoe UI",
+                           "Tahoma", "DejaVu Sans")
+_resolved_family = None
+
+# v6.20: one Fluent-style type scale — every label size comes from here
+# so the hierarchy (caption/body/subtitle/title/display) stays coherent.
+TYPE_SCALE = {
+    "caption": 9,
+    "body": 11,
+    "subtitle": 13,
+    "title": 18,
+    "title_large": 22,
+    "display": 28,
+}
+
+
+def resolve_font_family(root=None):
+    """Pick the best installed family from FONT_FAMILIES_PREFERRED.
+
+    Safe everywhere: any failure keeps the plain Segoe UI default.
+    """
+    global FONT_FAMILY, _resolved_family
+    if _resolved_family:
+        return _resolved_family
+    fam = FONT_FAMILY
+    try:
+        from tkinter import font as tkfont
+        available = set(tkfont.families(root))
+        for cand in FONT_FAMILIES_PREFERRED:
+            if cand in available:
+                fam = cand
+                break
+    except Exception:
+        fam = FONT_FAMILY
+    FONT_FAMILY = fam
+    _resolved_family = fam
+    return fam
 # v5.9: font-size scale (0=normal, 2=large, 4=extra large) added to every font().
 FONT_DELTA = 0
 FONT_SCALES = {"normal": 0, "large": 2, "xlarge": 4}
@@ -48,15 +88,19 @@ def font(size=11, bold=False, family=None):
     return (family or FONT_FAMILY, size + FONT_DELTA, "bold" if bold else "normal")
 
 
+# v6.20 palettes move to the Windows 11 Fluent neutrals: a light mica
+# grey (#F3F3F3) and the Win11 dark charcoal (#202020) with layered
+# card surfaces and subtle 1px borders.  Status colours are unchanged —
+# the v6.18 colour language stays exactly as users learned it.
 LIGHT = {
     "name": "light",
-    "bg": "#EEF1F8",
+    "bg": "#F3F3F3",
     "card_bg": "#FFFFFF",
     "header_bg": "#0B3B39",
     "header_bg2": "#082B2A",
     "header_fg": "#FFFFFF",
-    "text": "#0F172A",
-    "muted": "#64748B",
+    "text": "#1B1B1B",
+    "muted": "#616161",
     "accent": "#0D9488",
     "accent_hover": "#14B8A6",
     "success": "#059669",
@@ -68,21 +112,21 @@ LIGHT = {
     "info": "#2563EB",
     "info_bg": "#DBEAFE",
     "input_bg": "#FFFFFF",
-    "border": "#E2E8F0",
-    "row_alt": "#F6F8FC",
+    "border": "#E0E0E0",
+    "row_alt": "#F7F7F7",
     "row_bg": "#FFFFFF",
-    "selected_bg": "#CFFAFE",
+    "selected_bg": "#DCEAF7",
 }
 
 DARK = {
     "name": "dark",
-    "bg": "#0A0E1A",
-    "card_bg": "#121A2E",
+    "bg": "#202020",
+    "card_bg": "#2C2C2C",
     "header_bg": "#0B3B39",
     "header_bg2": "#082B2A",
     "header_fg": "#FFFFFF",
-    "text": "#E5ECF5",
-    "muted": "#8CA0BE",
+    "text": "#F2F2F2",
+    "muted": "#A9A9A9",
     "accent": "#14B8A6",
     "accent_hover": "#2DD4BF",
     "success": "#34D399",
@@ -93,11 +137,11 @@ DARK = {
     "danger_bg": "#3F0D0D",
     "info": "#60A5FA",
     "info_bg": "#0B1E3D",
-    "input_bg": "#1B2740",
-    "border": "#26334F",
-    "row_alt": "#16213B",
-    "row_bg": "#121A2E",
-    "selected_bg": "#15324B",
+    "input_bg": "#3A3A3A",
+    "border": "#454545",
+    "row_alt": "#323232",
+    "row_bg": "#2C2C2C",
+    "selected_bg": "#3B4C5E",
 }
 
 PALETTES = {"light": LIGHT, "dark": DARK}
@@ -262,6 +306,7 @@ def set_theme_name(db, theme_name):
 def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
     """Configure every ttk style for the palette. Safe to call twice."""
     set_font_scale(font_scale)
+    resolve_font_family(root)
     p = palette(theme_name, accent)
     try:
         style.theme_use("clam")
@@ -274,20 +319,20 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
     style.configure("TFrame", background=p["bg"])
     style.configure("TLabel", background=p["bg"], foreground=p["text"],
                     font=font(11))
-    style.configure("Header.TLabel", font=font(18, bold=True),
+    style.configure("Header.TLabel", font=font(TYPE_SCALE["title"], bold=True),
                     foreground=p["text"])
-    style.configure("Section.TLabel", font=font(13, bold=True),
+    style.configure("Section.TLabel", font=font(TYPE_SCALE["subtitle"], bold=True),
                     foreground=p["accent"])
-    style.configure("Muted.TLabel", font=font(10), foreground=p["muted"])
-    style.configure("Total.TLabel", font=font(18, bold=True),
+    style.configure("Muted.TLabel", font=font(TYPE_SCALE["caption"]), foreground=p["muted"])
+    style.configure("Total.TLabel", font=font(TYPE_SCALE["title"], bold=True),
                     foreground=p["success"])
-    style.configure("Huge.TLabel", font=font(28, bold=True),
+    style.configure("Huge.TLabel", font=font(TYPE_SCALE["display"], bold=True),
                     foreground=p["success"])
-    style.configure("CardTitle.TLabel", font=font(11, bold=True),
+    style.configure("CardTitle.TLabel", font=font(TYPE_SCALE["body"], bold=True),
                     foreground=p["muted"], background=p["card_bg"])
     style.configure("CardValue.TLabel", font=font(24, bold=True),
                     foreground=p["text"], background=p["card_bg"])
-    style.configure("CardSub.TLabel", font=font(10),
+    style.configure("CardSub.TLabel", font=font(TYPE_SCALE["caption"]),
                     foreground=p["muted"], background=p["card_bg"])
     style.configure("Card.TFrame", background=p["card_bg"])
     style.configure("Card.TLabel", background=p["card_bg"],
@@ -355,13 +400,17 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
               background=[("selected", p["card_bg"]), ("!selected", p["bg"])],
               foreground=[("selected", p["accent"]), ("!selected", p["text"])],
               expand=[("selected", (1, 1, 1, 0))])
+    # v6.20: Fluent tables — a quiet header row (muted text on the
+    # surface colour with a hairline border) instead of a heavy
+    # coloured bar; the data is the loud part, not the chrome.
     style.configure("Treeview", font=font(11), rowheight=36,
                     background=p["row_bg"], fieldbackground=p["row_bg"],
                     foreground=p["text"], bordercolor=p["border"],
                     borderwidth=0)
-    style.configure("Treeview.Heading", font=font(11, bold=True),
-                    background=p["header_bg"], foreground="#FFFFFF",
-                    relief="flat", padding=(8, 7))
+    style.configure("Treeview.Heading", font=font(10, bold=True),
+                    background=p["row_alt"], foreground=p["muted"],
+                    relief="flat", padding=(8, 7),
+                    bordercolor=p["border"])
     style.map("Treeview", background=[("selected", p["selected_bg"])],
               foreground=[("selected", p["text"])])
     style.configure("TSeparator", background=p["border"])
@@ -465,25 +514,97 @@ def status_tag_for_urgency(urgency):
 
 
 # ---------------------------------------------------------------- widgets
+# v6.20: Fluent cards have rounded corners and a hairline border.
+# Tkinter has no native rounded frames, so the card is a Canvas that
+# draws a rounded rectangle (plus a small accent pill) and holds the
+# labels in an inner frame — and any failure falls back to the plain
+# v6.15 frame card, so a theme glitch can never lose dashboard content.
+CARD_RADIUS = 10
+
+
+def _round_rect(canvas, x1, y1, x2, y2, r, **kw):
+    """Polygon approximating a rounded rectangle on a canvas."""
+    r = max(0, min(int(r), (x2 - x1) // 2, (y2 - y1) // 2))
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r,
+           x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r,
+           x1, y1 + r, x1, y1]
+    return canvas.create_polygon(pts, smooth=True, **kw)
+
+
 def make_card(parent, title, value, subtitle="", accent="#0F766E",
               theme_name="light"):
-    """A summary card (tk.Frame so it keeps its own background).
-
-    Returns (frame, value_label, subtitle_label) so the caller can
-    update the numbers later without rebuilding the card.
-    """
+    """A summary card.  Returns (frame, value_label, subtitle_label) so
+the caller can update the numbers later without rebuilding the card."""
     p = palette(theme_name)
+    try:
+        return _make_rounded_card(parent, title, value, subtitle,
+                                  accent, theme_name, p)
+    except Exception:
+        return _make_flat_card(parent, title, value, subtitle, accent, p)
+
+
+def _card_labels(body, title, value, subtitle):
+    """The three labels every card variant shows."""
+    ttk.Label(body, text=title, style="CardTitle.TLabel").pack(anchor="w")
+    val = ttk.Label(body, text=value, style="CardValue.TLabel")
+    val.pack(anchor="w", pady=(2, 0))
+    sub = ttk.Label(body, text=subtitle, style="CardSub.TLabel")
+    sub.pack(anchor="w")
+    return val, sub
+
+
+def _make_rounded_card(parent, title, value, subtitle, accent,
+                       theme_name, p):
+    """Fluent rounded card: rounded rect + accent pill on a canvas."""
+    cv = tk.Canvas(parent, bg=p["bg"], highlightthickness=0, bd=0)
+    cv._card_theme = theme_name
+    inner = tk.Frame(cv, bg=p["card_bg"], padx=12, pady=10)
+    win_id = cv.create_window(0, 0, window=inner, anchor="nw")
+    val, sub = _card_labels(inner, title, value, subtitle)
+
+    def _redraw(_event=None):
+        try:
+            pal = palette(getattr(cv, "_card_theme", "light"))
+            w = max(cv.winfo_width(), 40)
+            h = max(cv.winfo_height(), 24)
+            cv.delete("cardshape")
+            _round_rect(cv, 1, 1, w - 2, h - 2, CARD_RADIUS,
+                        fill=pal["card_bg"], outline=pal["border"],
+                        width=1, tags="cardshape")
+            cy = h // 2
+            _round_rect(cv, 7, cy - 9, 11, cy + 9, 2,
+                        fill=accent, outline="", tags="cardshape")
+            cv.coords(win_id, 19, 4)
+            cv.itemconfigure(win_id, width=max(w - 25, 1),
+                             height=max(h - 8, 1))
+        except Exception:
+            pass
+
+    cv.bind("<Configure>", _redraw)
+    # A canvas does not count window items in its requested size, so
+    # without this the card would collapse to a strip; ask for the
+    # labels' natural size (the row still stretches it with expand).
+    try:
+        inner.update_idletasks()
+        cv.configure(width=max(inner.winfo_reqwidth() + 25, 160),
+                     height=max(inner.winfo_reqheight() + 8, 70))
+    except Exception:
+        cv.configure(width=200, height=90)
+    cv._card_body = inner
+    cv._card_value = val
+    cv._card_sub = sub
+    return cv, val, sub
+
+
+def _make_flat_card(parent, title, value, subtitle, accent, p):
+    """The pre-v6.20 plain frame card — kept as the safe fallback."""
     frame = tk.Frame(parent, bg=p["card_bg"], highlightbackground=p["border"],
                      highlightthickness=1, padx=16, pady=12)
     accent_bar = tk.Frame(frame, bg=accent, width=4)
     accent_bar.pack(side="left", fill="y", padx=(0, 10))
     body = tk.Frame(frame, bg=p["card_bg"])
     body.pack(side="left", fill="both", expand=True)
-    ttk.Label(body, text=title, style="CardTitle.TLabel").pack(anchor="w")
-    val = ttk.Label(body, text=value, style="CardValue.TLabel")
-    val.pack(anchor="w", pady=(2, 0))
-    sub = ttk.Label(body, text=subtitle, style="CardSub.TLabel")
-    sub.pack(anchor="w")
+    val, sub = _card_labels(body, title, value, subtitle)
     frame._card_body = body
     frame._card_value = val
     frame._card_sub = sub
@@ -494,8 +615,17 @@ def make_card(parent, title, value, subtitle="", accent="#0F766E",
 def recolor_card(frame, theme_name="light"):
     p = palette(theme_name)
     try:
-        frame.configure(bg=p["card_bg"], highlightbackground=p["border"])
-        frame._card_body.configure(bg=p["card_bg"])
+        if isinstance(frame, tk.Canvas):
+            # Rounded card: the canvas keeps the window background so the
+            # rounded corners blend in; the shape redraw picks up the
+            # new palette through _card_theme.
+            frame._card_theme = theme_name
+            frame.configure(bg=p["bg"])
+            frame._card_body.configure(bg=p["card_bg"])
+            frame.event_generate("<Configure>")
+        else:
+            frame.configure(bg=p["card_bg"], highlightbackground=p["border"])
+            frame._card_body.configure(bg=p["card_bg"])
         frame._card_value.configure(background=p["card_bg"])
         frame._card_sub.configure(background=p["card_bg"])
     except Exception:
@@ -556,5 +686,99 @@ def set_status(lbl, text, kind=None, theme_name="light"):
     fg, bg = status_colors(kind, theme_name)
     try:
         lbl.configure(text=text, bg=bg, fg=fg)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------- windows
+# v6.20: Windows-11 window behaviour — screen-aware default size, a
+# sensible minimum, and remembered geometry (size, position and the
+# maximized state) so the app reopens exactly how the user left it.
+import re as _re
+
+_GEOMETRY_RE = _re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
+
+
+def center_window(win, w, h):
+    """Centre a window on the screen at the given size (safe no-op)."""
+    try:
+        win.update_idletasks()
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        win.geometry("%dx%d+%d+%d" % (w, h, x, y))
+    except Exception:
+        pass
+
+
+def _geometry_ok(geom, sw, sh):
+    """A remembered geometry is used only when it still fits the screen
+    (a monitor could have been unplugged since it was saved)."""
+    m = _GEOMETRY_RE.match(str(geom or ""))
+    if not m:
+        return False
+    w, h, x, y = (int(v) for v in m.groups())
+    if w < 700 or h < 450 or w > sw + 400 or h > sh + 300:
+        return False
+    if x < -100 or y < -100 or x > sw - 60 or y > sh - 60:
+        return False
+    return True
+
+
+def setup_main_window(root, db):
+    """Size/place the main window and remember its geometry on close.
+
+    First run keeps the old behaviour users know (starts maximized);
+    later runs restore the saved size/position and maximized state.
+    Everything is wrapped so a bad saved value can never block startup.
+    """
+    try:
+        root.minsize(1024, 600)
+    except Exception:
+        pass
+    saved = get_ui_pref(db, "ui_geometry", "")
+    maximized = get_ui_pref(db, "ui_maximized", "") == "1"
+    try:
+        sw = root.winfo_screenwidth()
+        sh = root.winfo_screenheight()
+    except Exception:
+        sw, sh = 1280, 800
+    placed = False
+    if _geometry_ok(saved, sw, sh):
+        try:
+            root.geometry(saved)
+            placed = True
+        except Exception:
+            placed = False
+    if not placed:
+        w = min(int(sw * 0.85), 1440)
+        h = min(int(sh * 0.85), 900)
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        try:
+            root.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        except Exception:
+            pass
+    if maximized or not saved:
+        try:
+            root.state("zoomed")
+        except Exception:
+            pass
+
+    def _save_and_close():
+        try:
+            zoomed = root.state() == "zoomed"
+            set_ui_pref(db, "ui_maximized", "1" if zoomed else "0")
+            if not zoomed:
+                # Only the windowed geometry is worth remembering —
+                # a maximized window's geometry is the whole screen.
+                set_ui_pref(db, "ui_geometry", root.winfo_geometry())
+        except Exception:
+            pass
+        root.destroy()
+
+    try:
+        root.protocol("WM_DELETE_WINDOW", _save_and_close)
     except Exception:
         pass
