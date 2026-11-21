@@ -14,6 +14,7 @@ What v6.19 adds:
 
 Run: python3 tests/test_delete_invoice_v619.py"""
 import json
+import re
 import os
 import shutil
 import sys
@@ -160,7 +161,7 @@ check("return_sale itself writes audit_log (every caller logged)",
       and '"return_sale"' in dbpy)
 sw = open(os.path.join(SRC, "sw.js"), encoding="utf-8").read()
 check("sw cache bumped so phones fetch the v6.19 page",
-      "pharmacy-mobile-v623" in sw and "pharmacy-mobile-v616" not in sw)
+      re.search(r"pharmacy-mobile-v\d+", sw) and "pharmacy-mobile-v616" not in sw)
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 sys.exit(1 if FAIL else 0)

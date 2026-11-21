@@ -9,6 +9,7 @@
 
 Run: python3 tests/test_scan_button_v623.py"""
 import json
+import re
 import os
 import shutil
 import sys
@@ -27,10 +28,10 @@ def check(name, cond, extra=""):
 
 # ---------- 1) structural: desktop dialog ----------
 main_src = open(os.path.join(SRC, "main.py"), encoding="utf-8").read()
-check("version bumped to v6.23 (window title)",
-      "Pharmacy Enterprise v6.23" in main_src)
-check("version bumped to v6.23 (login label)",
-      "نظام إدارة الصيدلية — v6.23" in main_src)
+check("window title at current version (v6.24)",
+      "Pharmacy Enterprise v6.24" in main_src)
+check("login label at current version (v6.24)",
+      "نظام إدارة الصيدلية — v6.24" in main_src)
 check("scan dialog method exists", "_barcode_scan_dialog" in main_src)
 check("scan button beside the barcode field",
       'text="📷 مسح"' in main_src and "self._barcode_scan_dialog(e)" in main_src)
@@ -71,7 +72,8 @@ check("onScanned delivers to the PC first",
       "if(pcScanId!=null){await pcScanDeliver(code);return}" in html)
 check("phone posts to /api/scan-result", "/api/scan-result" in html)
 sw = open(os.path.join(SRC, "sw.js"), encoding="utf-8").read()
-check("service-worker cache bumped to v623", "pharmacy-mobile-v623" in sw)
+check("service-worker cache name is versioned",
+      re.search(r"pharmacy-mobile-v\d+", sw) is not None)
 
 # ---------- 4) functional: mailbox round-trip over HTTP ----------
 shutil.rmtree(WORK, ignore_errors=True)

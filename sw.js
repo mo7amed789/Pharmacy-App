@@ -14,7 +14,7 @@
 // updates never reached the phone UI, so the phone kept running an
 // old client against a new server. Now every load asks the server
 // first and falls back to the cache only when the PC is unreachable.
-var CACHE = 'pharmacy-mobile-v623';
+var CACHE = 'pharmacy-mobile-v624';
 var SHELL = ['/', '/zxing.min.js', '/manifest.json',
              '/icon-192.png', '/icon-512.png'];
 

@@ -219,8 +219,8 @@ class TestMainWiring(unittest.TestCase):
         self.assertIn("_cloud_refresh_label", self.src)
 
     def test_version_bumped(self):
-        self.assertIn("Pharmacy Enterprise v6.23", self.src)
-        self.assertIn("نظام إدارة الصيدلية — v6.23", self.src)
+        self.assertIn("Pharmacy Enterprise v6.24", self.src)
+        self.assertIn("نظام إدارة الصيدلية — v6.24", self.src)
 
     def test_button_hierarchy_applied_to_visible_actions(self):
         # الحذف والمسح والمرتجع بألوانهم الدلالية.
