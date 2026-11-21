@@ -118,3 +118,9 @@ including eye/nasal/oral drops in the drug catalog.
 - Whole-piece forms such as oils, soap, deodorant and toothpaste can only
   be sold as a whole pack, not a strip or pill. Tablet/capsule behavior stays
   unchanged.
+
+## Open reference research (v6.30)
+
+`open_reference_batch2_provenance.csv` contains two source-checked proposals, NOT an import file. Both remain `import_ready=False`; no live rows were inserted by this update. Preserve identifiers as text and keep this provenance with any later authorized data export.
+
+Contains data from Open Beauty Facts and Open Products Facts, available under the Open Database License (ODbL 1.0). Individual contents: DbCL. No product images included. Source and license links, distribution obligations, and the boundary excluding private sales/customer/stock records are documented in [v6.30](../docs/changelog/README_AR_V6.30.md).
