@@ -937,6 +937,8 @@ def _make_handler(db_path, req_log=None):
                     self._api_create_drug()
                 elif path.startswith("/api/invoices/") and path.endswith("/edit"):
                     self._api_edit_invoice(path)
+                elif path.startswith("/api/invoices/") and path.endswith("/return"):
+                    self._api_return_invoice(path)
                 else:
                     self._send_json(404, {"error": "غير موجود"})
             except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
@@ -1268,6 +1270,36 @@ def _make_handler(db_path, req_log=None):
                 self._send_json(404, {"error": "الفاتورة غير موجودة"})
                 return
             self._send_json(200, {"invoice": detail})
+
+        def _api_return_invoice(self, path):
+            """v6.17: POST /api/invoices/<id>/return — FULL return (void)
+            of a completed invoice from the phone: same return_sale()
+            the PC uses — every batch restocked, credit reversed,
+            status -> returned, sale_returns + audit written, one
+            atomic transaction. An empty invoice can never be SAVED by
+            the edit flow, so when the phone user deletes every line
+            and approves, the client offers this explicit full-cancel
+            instead of a dead-end message. A returned invoice is
+            refused (no double restock)."""
+            if not self._require_pin():
+                return
+            try:
+                sid = int(path.split("/")[3])
+            except Exception:
+                self._send_json(400, {"error": "رقم فاتورة غير صحيح"})
+                return
+            with WRITE_LOCK:
+                db = self._db()
+                try:
+                    db.return_sale(sid, "mobile",
+                                   reason="إلغاء كامل من الموبايل")
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                finally:
+                    db.close()
+            self._send_json(200, {"ok": True, "sale_id": sid,
+                                  "message": "أُلغيت الفاتورة (إرجاع كامل) — رجعت الكميات للمخزون"})
 
         def _api_edit_invoice(self, path):
             """v5.5: POST /api/invoices/<id>/edit — same edit_sale()

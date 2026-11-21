@@ -741,7 +741,19 @@ function saveHistoryEdit(){
   if(!hId||hSaving)return;
   $('histMsg').className='msg';
   const act=hCart.filter(c=>!c.held),heldL=hCart.filter(c=>c.held);
-  if(!act.length){hMsg(hCart.length?'كل الأصناف محذوفة مؤقتاً — استرجع ما تريده قبل الاعتماد.':'الفاتورة فارغة.');return}
+  // v6.17: deleting EVERY line is not an edit — an empty invoice can
+  // never be saved. It means "cancel the whole invoice", so ask
+  // explicitly and run a full return (stock back, credit reversed)
+  // instead of the old dead-end banner that looked like a dead button.
+  if(!act.length){
+    if(hCart.length){
+      pendingEdit={id:hId,voidAll:true};
+      $('histSummary').textContent='⚠️ حذف كل الأصناف = إلغاء الفاتورة بالكامل.\nكل الكميات ترجع للمخزون، وأي دين آجل على الفاتورة يتلغى، وحالتها تصبح «مُرجعة».\nلا يمكن التراجع عن الإلغاء.';
+      $('histOk').textContent='🗑️ تأكيد إلغاء الفاتورة';
+      const c=$('histConfirm');c.classList.remove('hidden');c.scrollIntoView({block:'center'});
+    }else hMsg('الفاتورة فارغة.');
+    return;
+  }
   const disc=parseFloat($('histDiscount').value||0)||0,t=r2(Math.max(0,hTotal()-disc)),raw=$('histPaid').value.trim();
   // paid=null lets the server decide (cash/card = new total) so cents never disagree with the phone's estimate.
   let pv=null;
@@ -761,6 +773,7 @@ function saveHistoryEdit(){
   if(hPay!==hOrigPay)sm.push('💳 طريقة الدفع تغيّرت');
   if(!sm.length){hMsg('لا توجد تغييرات لاعتمادها.');return}
   const nt=Math.max(0,hTotal()-disc),diff=nt-hOld;
+  $('histOk').textContent='✅ تأكيد الاعتماد';
   pendingEdit={id:hId,body:{items:act.map(c=>c.isNew?{drug_id:c.drug_id,unit:c.unit,qty:c.qty}:{drug_id:c.drug_id,unit:c.unit,qty:c.qty,discount:c.disc||0}),discount:disc,payment:hPay,customer_id:hCust,paid:pv,approved:true,
     deleted_items:heldL.map(c=>({drug_id:c.drug_id,unit:c.unit,qty:c.qty}))}};
   $('histSummary').textContent=sm.join('\n')+'\n\nالمحفوظ: '+f2(hOld)+' ج.م\nالجديد: '+f2(nt)+' ج.م\nالفرق: '+f2(diff)+' ج.م'+(diff>0?' (يُحصَّل)':diff<0?' (يُرد)':' (لا فرق)');
@@ -769,11 +782,13 @@ function saveHistoryEdit(){
 async function doHistSave(){
   if(!pendingEdit||hSaving)return;
   hSaving=true;const btn=$('histOk');btn.textContent='جارٍ الحفظ…';btn.disabled=true;
+  const voidAll=!!pendingEdit.voidAll;
   try{
-    const r=await api('/api/invoices/'+pendingEdit.id+'/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pendingEdit.body)});
+    const r=await api('/api/invoices/'+pendingEdit.id+(voidAll?'/return':'/edit'),
+      voidAll?{method:'POST'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pendingEdit.body)});
     chk(r);let d={};try{d=await r.json()}catch(e){}
-    if(!r.ok){$('histConfirm').classList.add('hidden');hMsg((d&&d.error)||'تعذّر حفظ التعديل (رمز '+r.status+').');return}
-    pendingEdit=null;showToast('تم التعديل — الجديد: '+f2(d.new_total)+' ج.م');closeHistDetail(true);loadHistory();pollLive();
+    if(!r.ok){$('histConfirm').classList.add('hidden');hMsg((d&&d.error)||(voidAll?'تعذّر إلغاء الفاتورة (رمز ':'تعذّر حفظ التعديل (رمز ')+r.status+').');return}
+    pendingEdit=null;showToast(voidAll?'أُلغيت الفاتورة (إرجاع كامل)':'تم التعديل — الجديد: '+f2(d.new_total)+' ج.م');closeHistDetail(true);loadHistory();pollLive();
   }catch(e){if(!quiet(e)){$('histConfirm').classList.add('hidden');hMsg('تعذّر الاتصال بالكمبيوتر.')}}
   finally{hSaving=false;btn.textContent='✅ تأكيد الاعتماد';btn.disabled=false}
 }
