@@ -488,7 +488,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.12 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.13 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         root.geometry("1280x800")
         root.minsize(1100, 650)
@@ -573,6 +573,10 @@ class App:
         self.db.audit(self.username, "login", "role=%s" % self.role)
         # v6.12: فحص تحديثات البرنامج من GitHub في الخلفية عند التشغيل
         self._startup_update_check()
+        # v6.13: المهام المجدولة — مزامنة ونسخ احتياطي تلقائي كل 24 ساعة
+        import automation
+        self._automation = automation.Automation(self.db.path)
+        self._automation.start()
 
     # ---------- thread-safe UI queue ----------
     def _ui_post(self, fn):
@@ -5140,7 +5144,37 @@ class App:
                           "وبعد التثبيت أعد تشغيل البرنامج.",
                   style="Muted.TLabel", wraplength=700, justify="left").pack(anchor="w", pady=2)
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
-        ttk.Label(f, text="سجل التدقيق (آخر 50 إجراء):", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        # ---------- v6.13: 🤖 المهام التلقائية ----------
+        ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
+        ttk.Label(f, text="🤖 المهام التلقائية:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        import automation
+        self.var_autosync = tk.BooleanVar(value=self.db.get_setting("autosync_enabled", "1") != "0")
+        ttk.Checkbutton(f, text="مزامنة الكتالوج من السحابة تلقائياً كل 24 ساعة (تحديث الأسعار بصمت)",
+                        variable=self.var_autosync, command=self._save_automation_flags).pack(anchor="w", pady=2)
+        self.var_autobackup = tk.BooleanVar(value=self.db.get_setting("autobackup_enabled", "1") != "0")
+        ttk.Checkbutton(f, text="نسخة احتياطية تلقائية من قاعدة البيانات كل 24 ساعة (يُحتفظ بأحدث 10 نسخ)",
+                        variable=self.var_autobackup, command=self._save_automation_flags).pack(anchor="w", pady=2)
+        self.lbl_automation = ttk.Label(f, text=automation.status_text(self.db), style="Muted.TLabel",
+                                        wraplength=700, justify="left")
+        self.lbl_automation.pack(anchor="w", pady=2)
+        ttk.Button(f, text="🔄 تحديث حالة المهام التلقائية",
+                   command=self._refresh_automation_status).pack(anchor="w", pady=2)
+        # ---------- v6.13: سجل التدقيق بفلاتر بحث ----------
+        ttk.Label(f, text="🧾 سجل التدقيق — كل ما يحدث في النظام:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        _af = ttk.Frame(f)
+        _af.pack(anchor="w", fill="x", pady=2)
+        ttk.Label(_af, text="بحث:").pack(side="left")
+        self.e_audit_filter = ttk.Entry(_af, width=22)
+        self.e_audit_filter.pack(side="left", padx=4)
+        ttk.Label(_af, text="نوع الإجراء:").pack(side="left")
+        self.cb_audit_action = ttk.Combobox(_af, width=20, state="readonly")
+        self.cb_audit_action.pack(side="left", padx=4)
+        ttk.Label(_af, text="المستخدم:").pack(side="left")
+        self.cb_audit_user = ttk.Combobox(_af, width=12, state="readonly")
+        self.cb_audit_user.pack(side="left", padx=4)
+        ttk.Button(_af, text="🔍 عرض", command=self.audit_refresh).pack(side="left", padx=6)
+        self.lbl_audit_count = ttk.Label(f, text="", style="Muted.TLabel")
+        self.lbl_audit_count.pack(anchor="w")
         self.txt_audit = tk.Text(f, width=100, height=12, font=("Segoe UI", 10))
         self.txt_audit.pack(fill="both", expand=True, pady=4)
         ttk.Button(f, text="تحديث سجل التدقيق", command=self.audit_refresh).pack(anchor="w", pady=4)
@@ -5426,6 +5460,16 @@ class App:
             self._ui_post(ui)
         cloud_sync.run_in_background(work, done)
 
+    # ---------- v6.13: المهام التلقائية ----------
+    def _save_automation_flags(self):
+        self.db.set_setting("autosync_enabled", "1" if self.var_autosync.get() else "0")
+        self.db.set_setting("autobackup_enabled", "1" if self.var_autobackup.get() else "0")
+        self._refresh_automation_status()
+
+    def _refresh_automation_status(self):
+        import automation
+        self.lbl_automation.config(text=automation.status_text(self.db))
+
     # ---------- v6.12: تحديثات البرنامج من GitHub ----------
     def _update_status_text(self):
         try:
@@ -5545,10 +5589,36 @@ class App:
         cloud_sync.run_in_background(work, done)
 
     def audit_refresh(self):
+        """v6.13: السجل بفلاتر (بحث حر / نوع الإجراء / المستخدم).
+        الحجم مضبوط: لا يُحتفظ إلا بأحدث 5,000 حدث (تنظيف تلقائي عند
+        كل تشغيل) فلا يكبر حتى بعد سنوات."""
+        try:
+            actions = self.db.audit_actions()
+            cur_a = self.cb_audit_action.get()
+            self.cb_audit_action.config(values=[""] + actions)
+            if cur_a and cur_a not in actions:
+                self.cb_audit_action.set("")
+            users = sorted({a["user"] for a in self.db.audit_list(5000) if a["user"]})
+            cur_u = self.cb_audit_user.get()
+            self.cb_audit_user.config(values=[""] + users)
+            if cur_u and cur_u not in users:
+                self.cb_audit_user.set("")
+        except Exception:
+            pass
+        text = self.e_audit_filter.get().strip()
+        action = self.cb_audit_action.get().strip()
+        user = self.cb_audit_user.get().strip()
+        rows = self.db.audit_query(text=text, action=action, user=user, limit=200)
         self.txt_audit.delete("1.0", "end")
-        for a in self.db.audit_list(50):
+        for a in rows:
             self.txt_audit.insert("end", "%s | %s | %s | %s\n" % (
                 a["created_at"], a["user"], a["action"], a["details"]))
+        total = self.db.audit_count()
+        shown = len(rows)
+        filters_on = bool(text or action or user)
+        self.lbl_audit_count.config(
+            text="يظهر %d%s من إجمالي %d حدث — يُحتفظ تلقائياً بأحدث 5,000 حدث فقط حتى لا يكبر الملف."
+                 % (shown, " (مفلترة)" if filters_on else " (الأحدث)", total))
 
 
 def _try_restore_latest_backup():

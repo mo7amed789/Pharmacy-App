@@ -57,6 +57,55 @@ class FakeClient:
                 r.get("catalog") or "drug" for r in self.rows}
 
 
+class TestConfigUrlHardening(unittest.TestCase):
+    """v6.13: رابط بلا https:// لا يسقط المزامنة أبداً — يُطبّع أو يُرفض بوضوح."""
+
+    def setUp(self):
+        self._env = {k: os.environ.pop(k, None)
+                     for k in ("SUPABASE_URL", "SUPABASE_KEY")}
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for k, v in self._env.items():
+            if v is not None:
+                os.environ[k] = v
+
+    def _write_cfg(self, url, key="test-key"):
+        import json as _json
+        fd, path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            _json.dump({"url": url, "key": key}, f)
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        return path
+
+    def test_missing_scheme_is_filled(self):
+        path = self._write_cfg("xekqbazfjtknocaezdvk.supabase.co")
+        url, key = supabase_client.load_config(path)
+        self.assertEqual(url, "https://xekqbazfjtknocaezdvk.supabase.co")
+        self.assertEqual(key, "test-key")
+
+    def test_scheme_and_trailing_slash_normalized(self):
+        path = self._write_cfg("  https://abc.supabase.co/  ")
+        url, _ = supabase_client.load_config(path)
+        self.assertEqual(url, "https://abc.supabase.co")
+
+    def test_broken_url_treated_as_unconfigured(self):
+        for bad in ("http://", "https://", "http://  ", "ftp://x.supabase.co",
+                    "ht tps://x.supabase.co"):
+            path = self._write_cfg(bad)
+            self.assertEqual(supabase_client.load_config(path), (None, None), bad)
+            self.assertFalse(supabase_client.is_configured(path), bad)
+
+    def test_client_raises_clear_arabic_error_for_broken_url(self):
+        with self.assertRaises(supabase_client.SupabaseError) as cm:
+            supabase_client.SupabaseClient(url="http://", key="k")
+        self.assertIn("غير صالح", str(cm.exception))
+
+    def test_client_accepts_url_without_scheme(self):
+        client = supabase_client.SupabaseClient(url="abc.supabase.co/", key="k")
+        self.assertEqual(client.url, "https://abc.supabase.co")
+
+
 class TestCloudSyncLocal(unittest.TestCase):
     def setUp(self):
         # اعزل الاختبارات عن أي إعداد حقيقي في البيئة

@@ -35,10 +35,36 @@ class SupabaseError(Exception):
     """أي فشل في الاتصال أو في استجابة الـ API."""
 
 
+def _normalize_url(raw):
+    """يوحّد رابط Supabase: يضيف https:// تلقائياً إن نُسيت، ويحذف / الأخيرة.
+
+    يرجع "" إن كان الرابط فارغاً أو غير صالح إطلاقاً (بلا host)، حتى لا
+    يسقط urllib لاحقاً بخطأ غير مفهوم مثل "unknown url type".
+    """
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "https://" + url
+    url = url.rstrip("/")
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return ""
+    if any(c.isspace() for c in url):
+        return ""
+    return url
+
+
 def load_config(path=None):
     """يرجع (url, key) أو (None, None) إن لم يُضبط الإعداد بعد.
 
     الأولوية: متغيرات البيئة، ثم ملف supabase_config.json بجوار البرنامج.
+    الرابط يُطبّع عبر _normalize_url: كتابة xxxx.supabase.co بدون https://
+    تعمل كما هي، والرابط التالف يُعامل كأن الإعداد غير موجود بدل أن يُسقط
+    المزامنة بخطأ غير واضح.
     """
     url = (os.environ.get("SUPABASE_URL") or "").strip()
     key = (os.environ.get("SUPABASE_KEY") or "").strip()
@@ -52,8 +78,9 @@ def load_config(path=None):
             key = key or (data.get("key") or "").strip()
         except (OSError, ValueError):
             pass
+    url = _normalize_url(url)
     if url and key:
-        return url.rstrip("/"), key
+        return url, key
     return None, None
 
 
@@ -67,8 +94,13 @@ class SupabaseClient:
 
     def __init__(self, url=None, key=None, timeout=30):
         cfg_url, cfg_key = load_config()
-        self.url = (url or cfg_url or "").rstrip("/")
-        self.key = key or cfg_key or ""
+        raw_url = url if url is not None else (cfg_url or "")
+        self.url = _normalize_url(raw_url)
+        self.key = (key or cfg_key or "").strip()
+        if raw_url and not self.url:
+            raise SupabaseError(
+                "رابط Supabase في الإعداد غير صالح — اكتبه كاملاً مثل "
+                "https://xxxx.supabase.co (راجع supabase_config.json)")
         if not (self.url and self.key):
             raise SupabaseError(
                 "إعداد Supabase غير موجود — اضبط SUPABASE_URL/SUPABASE_KEY "
