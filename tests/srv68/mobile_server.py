@@ -980,6 +980,9 @@ def _make_handler(db_path, req_log=None):
                     self._api_diag()
                 elif path == "/api/customers":
                     self._api_customers(parsed)
+                elif path == "/api/cloud-config":
+                    # v6.26: Supabase url+key for the phone's cloud mode.
+                    self._api_cloud_config()
                 elif path == "/api/invoices":
                     self._api_invoices_list(parsed)
                 elif path.startswith("/api/invoice/"):
@@ -1139,6 +1142,22 @@ def _make_handler(db_path, req_log=None):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
+
+        def _api_cloud_config(self):
+            """v6.26: GET /api/cloud-config -> {"url":..., "key":...}.
+            PIN-protected like every /api/* call. The phone stores the
+            pair in localStorage so its cached PWA can reach Supabase
+            directly (cloud mode) when this PC is unreachable. Empty
+            strings when sync is not configured — cloud mode then stays
+            off on the phone."""
+            if not self._require_pin():
+                return
+            try:
+                import supabase_client
+                url, key = supabase_client.load_config()
+            except Exception:
+                url, key = None, None
+            self._send_json(200, {"url": url or "", "key": key or ""})
 
         def _api_drugs(self, parsed):
             if not self._require_pin():

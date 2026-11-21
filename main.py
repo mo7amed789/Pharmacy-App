@@ -262,7 +262,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.25", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.26", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -496,7 +496,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.25 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.26 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         # v6.20: screen-aware default size + sensible minimum + the
         # window reopens with the size, position and maximized state it
@@ -595,6 +595,13 @@ class App:
         self.db.audit(self.username, "login", "role=%s" % self.role)
         # v6.12: فحص تحديثات البرنامج من GitHub في الخلفية عند التشغيل
         self._startup_update_check()
+        # v6.26: سحب فواتير الهاتف من السحابة (الوضع السحابي) كل 15 ثانية
+        # — يعمل فقط عند تفعيل المزامنة، ولا يؤثر على العمل المحلي.
+        try:
+            import cloud_sync
+            self._cloud_orders_thread = cloud_sync.start_order_polling(self.db.path)
+        except Exception:
+            self._cloud_orders_thread = None
         # v6.13: المهام المجدولة — مزامنة ونسخ احتياطي تلقائي كل 24 ساعة
         import automation
         self._automation = automation.Automation(self.db.path)
@@ -5702,6 +5709,12 @@ class App:
                     "إلى supabase_config.json بجوار البرنامج واكتب فيه رابط المشروع والمفتاح، "
                     "ثم أعد تشغيل البرنامج. بعدها أي صنف جديد أو معدّل يُرفع للسحابة تلقائياً.")
         parts = ["المزامنة مفعّلة — أي صنف جديد أو معدّل يُرفع للسحابة تلقائياً."]
+        # v6.26: حالة طابور فواتير الهاتف السحابي (بيع بلا واي فاي)
+        parts.append("فواتير الهاتف السحابية: تُسحب وتُسجَّل تلقائياً كل 15 ثانية عند توفر الإنترنت.")
+        if st.get("orders_last"):
+            parts.append("آخر فاتورة سحابية: %s" % st["orders_last"])
+        if st.get("orders_error"):
+            parts.append("آخر خطأ في الفواتير السحابية: %s" % st["orders_error"])
         if st.get("last_pull"):
             parts.append("آخر سحب: " + st["last_pull"])
         if st.get("last_push"):

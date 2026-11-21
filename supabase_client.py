@@ -205,6 +205,31 @@ class SupabaseClient:
             extra_headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
         return len(clean)
 
+    # ---------- طابور فواتير الموبايل (v6.26 — الوضع السحابي) ----------
+    # جدول mobile_orders: الهاتف يدرج طلب بيع عندما يتعذر الوصول للكمبيوتر،
+    # والبرنامج يسحب الطلبات المعلقة ويطبقها بنفس منطق البيع المحلي ثم
+    # يحدّث الحالة ليقرأها الهاتف. الإعداد والصلاحيات في
+    # docs/supabase_mobile_orders.sql.
+    def fetch_pending_orders(self, limit=10):
+        """طلبات البيع المعلقة من الهاتف، الأقدم أولاً."""
+        rows, _ = self._request(
+            "GET", "/rest/v1/mobile_orders",
+            {"select": "id,created_at,payload", "status": "eq.pending",
+             "order": "created_at.asc", "limit": int(limit)})
+        return rows or []
+
+    def update_order(self, order_id, status, result=None):
+        """يحدّث حالة الطلب (done/failed) مع النتيجة ليقرأها الهاتف."""
+        from datetime import datetime, timezone
+        body = {"status": status,
+                "processed_at": datetime.now(timezone.utc).isoformat()}
+        if result is not None:
+            body["result"] = result
+        self._request(
+            "PATCH", "/rest/v1/mobile_orders",
+            {"id": "eq.%d" % int(order_id)}, body=body,
+            extra_headers={"Prefer": "return=minimal"})
+
     def delete_product(self, product_id):
         self._request("DELETE", "/rest/v1/" + TABLE,
                       {"id": "eq.%d" % int(product_id)},
