@@ -3,7 +3,7 @@
 Offline-first pharmacy management app for Windows, Arabic-first UI, in Egyptian pounds (EGP).
 Built with Python standard library only (Tkinter + SQLite) — no pip packages, no venv.
 
-**Version: v6.14**
+**Version: v6.15**
 
 ## Features
 
@@ -115,6 +115,22 @@ Files: `automation.py`, `DB.audit_query/audit_actions/audit_count` in
 
 Files: `main.py` (`_ensure_tab`, `_kick_dash_ai`, refresh guards),
 `tests/test_lazy_tabs.py`.
+
+## Futuristic UI — v6.15
+
+Visual overhaul, no behavior change:
+
+- Deep night-drive **dark theme is now the default** (light theme also
+  refreshed); the 🌙/☀️ toggle still switches instantly.
+- Modern accent family: cyan (default), electric blue, emerald, and a
+  new violet — Settings → 🎨 التخصيص.
+- Flatter, roomier buttons and tabs, 36px table rows, slim themed
+  scrollbars, and plain Text/Listbox widgets (audit log etc.) now
+  follow the palette automatically.
+- Login screen follows the saved theme.
+
+Everything stays centralized in `ui_theme.py`.
+`tests/test_theme.py`: 8 structural tests.
 
 ## Full Arabic guide
 
