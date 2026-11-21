@@ -36,9 +36,9 @@ sync_src = open(os.path.join(SRC, "cloud_sync.py"), encoding="utf-8").read()
 client_src = open(os.path.join(SRC, "supabase_client.py"), encoding="utf-8").read()
 
 # ---------- 1) الإصدار والكاش ----------
-check("window title at v6.26", "Pharmacy Enterprise v6.26" in main_src)
-check("login label at v6.26", "نظام إدارة الصيدلية — v6.26" in main_src)
-check("sw cache bumped to v626", "pharmacy-mobile-v626" in sw)
+check("window title at v6.27", "Pharmacy Enterprise v6.27" in main_src)
+check("login label at v6.27", "نظام إدارة الصيدلية — v6.27" in main_src)
+check("sw cache bumped to v627", "pharmacy-mobile-v627" in sw)
 
 # ---------- 2) sw لا يعترض حركة السحابة ----------
 check("sw ignores cross-origin (Supabase) traffic",
@@ -161,8 +161,12 @@ sql_path = os.path.join(SRC, "docs", "supabase_mobile_orders.sql")
 check("docs/supabase_mobile_orders.sql exists", os.path.isfile(sql_path))
 if os.path.isfile(sql_path):
     sql = open(sql_path, encoding="utf-8").read()
-    check("sql creates mobile_orders", "mobile_orders" in sql and "create table" in sql.lower())
-    check("sql enables RLS", "row level security" in sql.lower())
+    # الملف الحالي إيقاف نشر مقصود حتى يُشحن التصميم المصادَق
+    # (حساب مخصص + RLS بلا أي صلاحية للمفتاح العلني).
+    check("sql is the deliberate deployment stop", "RAISE EXCEPTION" in sql)
+    check("sql grants nothing to the anon key",
+          not any("grant" in ln.lower() and "anon" in ln.lower()
+                  for ln in sql.splitlines()))
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 sys.exit(1 if FAIL else 0)
