@@ -245,7 +245,9 @@ class LoginWindow:
         self.root.geometry("430x400")
         self.root.resizable(False, False)
         _style = ttk.Style()
-        ui_theme.apply_theme(self.root, _style, "light")
+        _lpal = ui_theme.apply_theme(
+            self.root, _style, ui_theme.get_theme_name(db),
+            db.get_setting("ui_accent", "teal"))
         ttk.Label(self.root, text="💊 Pharmacy Enterprise", font=("Segoe UI", 22, "bold")).pack(pady=(16, 2))
         try:
             _pn = db.conn.execute("SELECT value FROM settings WHERE key='pharmacy_name'").fetchone()
@@ -253,8 +255,8 @@ class LoginWindow:
         except Exception:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
-                  foreground="#0F766E").pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.10", font=("Segoe UI", 12)).pack()
+                  foreground=_lpal["accent"]).pack(pady=2)
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.15", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -488,7 +490,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.14 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.15 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         root.geometry("1280x800")
         root.minsize(1100, 650)
@@ -5099,9 +5101,10 @@ class App:
         ttk.Label(f, text="لون التمييز:").pack(anchor="w")
         self.var_accent = tk.StringVar(value=getattr(self, "ui_accent", "teal"))
         self.cb_accent = ttk.Combobox(f, textvariable=self.var_accent, width=30, state="readonly",
-                                      values=["teal", "blue", "green"])
+                                      values=list(ui_theme.ACCENTS.keys()))
         self.cb_accent.pack(anchor="w", pady=2)
-        ttk.Label(f, text="أزرق = blue ، أخضر = green ، تركوازي = teal (الافتراضي).").pack(anchor="w")
+        ttk.Label(f, text=" | ".join("%s = %s" % (v["label"], k)
+                                      for k, v in ui_theme.ACCENTS.items())).pack(anchor="w")
         ttk.Label(f, text="حجم الخط:").pack(anchor="w", pady=(6, 0))
         self.var_fontsize = tk.StringVar(value=getattr(self, "ui_font_size", "normal"))
         self.cb_fontsize = ttk.Combobox(f, textvariable=self.var_fontsize, width=30, state="readonly",

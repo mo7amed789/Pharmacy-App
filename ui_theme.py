@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Pharmacy Enterprise v3 — UI theme module (stdlib only: Tkinter/ttk).
+Pharmacy Enterprise v6.15 — UI theme module (stdlib only: Tkinter/ttk).
 
 One place for the whole look: colours, fonts, card/banner helpers and
 Treeview striping.  Business logic, database and forecasting are NOT
 here — this file only changes how things look.
+
+v6.15 «futuristic» refresh: a deeper night-drive dark palette (the new
+default), a cleaner modern light palette, cyan/violet accent family,
+flatter buttons, roomier tabs and table rows, themed scrollbars, and
+themed tk Text/Listbox defaults so every surface matches the palette.
 
 Windows fonts first (Segoe UI), with Tahoma / DejaVu Sans as fallbacks
 so the same file also renders on Linux during smoke tests.
@@ -19,9 +24,10 @@ FONT_DELTA = 0
 FONT_SCALES = {"normal": 0, "large": 2, "xlarge": 4}
 FONT_SCALE_LABELS = {"normal": "عادي", "large": "كبير", "xlarge": "كبير جداً"}
 ACCENTS = {
-    "teal":  {"label": "تركوازي (افتراضي)", "accent": "#0F766E", "hover": "#0D9488", "header": "#0F766E", "header2": "#115E59"},
-    "blue":  {"label": "أزرق", "accent": "#1D4ED8", "hover": "#2563EB", "header": "#1E40AF", "header2": "#1E3A8A"},
-    "green": {"label": "أخضر", "accent": "#15803D", "hover": "#16A34A", "header": "#166534", "header2": "#14532D"},
+    "teal":   {"label": "سماوي (افتراضي)", "accent": "#0D9488", "hover": "#14B8A6", "header": "#0B3B39", "header2": "#082B2A"},
+    "blue":   {"label": "أزرق كهربائي", "accent": "#3B82F6", "hover": "#60A5FA", "header": "#1E3A8A", "header2": "#172554"},
+    "green":  {"label": "زمردي", "accent": "#10B981", "hover": "#34D399", "header": "#064E3B", "header2": "#022C22"},
+    "violet": {"label": "بنفسجي", "accent": "#8B5CF6", "hover": "#A78BFA", "header": "#4C1D95", "header2": "#2E1065"},
 }
 def set_font_scale(delta):
     global FONT_DELTA
@@ -38,54 +44,54 @@ def font(size=11, bold=False, family=None):
 
 LIGHT = {
     "name": "light",
-    "bg": "#F2F5F7",
+    "bg": "#EEF1F8",
     "card_bg": "#FFFFFF",
-    "header_bg": "#0F766E",      # deep teal
-    "header_bg2": "#115E59",
+    "header_bg": "#0B3B39",
+    "header_bg2": "#082B2A",
     "header_fg": "#FFFFFF",
-    "text": "#1F2937",
-    "muted": "#6B7280",
-    "accent": "#0F766E",
-    "accent_hover": "#0D9488",
-    "success": "#15803D",
-    "success_bg": "#DCFCE7",
-    "warning": "#B45309",
+    "text": "#0F172A",
+    "muted": "#64748B",
+    "accent": "#0D9488",
+    "accent_hover": "#14B8A6",
+    "success": "#059669",
+    "success_bg": "#D1FAE5",
+    "warning": "#D97706",
     "warning_bg": "#FEF3C7",
-    "danger": "#B91C1C",
+    "danger": "#DC2626",
     "danger_bg": "#FEE2E2",
-    "info": "#1D4ED8",
+    "info": "#2563EB",
     "info_bg": "#DBEAFE",
     "input_bg": "#FFFFFF",
-    "border": "#D1D5DB",
-    "row_alt": "#F3F4F6",
+    "border": "#E2E8F0",
+    "row_alt": "#F6F8FC",
     "row_bg": "#FFFFFF",
-    "selected_bg": "#CCFBF1",
+    "selected_bg": "#CFFAFE",
 }
 
 DARK = {
     "name": "dark",
-    "bg": "#111827",
-    "card_bg": "#1F2937",
-    "header_bg": "#0F766E",
-    "header_bg2": "#115E59",
+    "bg": "#0A0E1A",
+    "card_bg": "#121A2E",
+    "header_bg": "#0B3B39",
+    "header_bg2": "#082B2A",
     "header_fg": "#FFFFFF",
-    "text": "#F9FAFB",
-    "muted": "#9CA3AF",
+    "text": "#E5ECF5",
+    "muted": "#8CA0BE",
     "accent": "#14B8A6",
     "accent_hover": "#2DD4BF",
-    "success": "#4ADE80",
-    "success_bg": "#14532D",
+    "success": "#34D399",
+    "success_bg": "#052E22",
     "warning": "#FBBF24",
-    "warning_bg": "#451A03",
+    "warning_bg": "#3B2A05",
     "danger": "#F87171",
-    "danger_bg": "#450A0A",
+    "danger_bg": "#3F0D0D",
     "info": "#60A5FA",
-    "info_bg": "#172554",
-    "input_bg": "#374151",
-    "border": "#4B5563",
-    "row_alt": "#273244",
-    "row_bg": "#1F2937",
-    "selected_bg": "#134E4A",
+    "info_bg": "#0B1E3D",
+    "input_bg": "#1B2740",
+    "border": "#26334F",
+    "row_alt": "#16213B",
+    "row_bg": "#121A2E",
+    "selected_bg": "#15324B",
 }
 
 PALETTES = {"light": LIGHT, "dark": DARK}
@@ -107,7 +113,7 @@ def set_ui_pref(db, key, value):
 
 # ---------------------------------------------------------------- settings
 def get_theme_name(db):
-    """Theme persisted in the settings table; default is light."""
+    """Theme persisted in the settings table; v6.15 default is dark."""
     try:
         row = db.conn.execute(
             "SELECT value FROM settings WHERE key='ui_theme'").fetchone()
@@ -115,7 +121,7 @@ def get_theme_name(db):
             return row["value"]
     except Exception:
         pass
-    return "light"
+    return "dark"
 
 
 def set_theme_name(db, theme_name):
@@ -187,39 +193,92 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
                     foreground=p["info"], font=font(12, bold=True))
     style.configure("Card.TRadiobutton", background=p["card_bg"],
                     foreground=p["text"], font=font(11))
-    style.configure("TButton", padding=(12, 9), font=font(11, bold=True))
+    style.configure("TButton", padding=(14, 10), font=font(11, bold=True),
+                    background=p["card_bg"], foreground=p["text"],
+                    bordercolor=p["border"], lightcolor=p["card_bg"],
+                    darkcolor=p["card_bg"], focusthickness=0)
+    style.map("TButton",
+              background=[("active", p["row_alt"]), ("pressed", p["border"])],
+              foreground=[("disabled", p["muted"])])
     style.configure("Accent.TButton", background=p["accent"],
-                    foreground="#FFFFFF", font=font(12, bold=True))
+                    foreground="#FFFFFF", font=font(12, bold=True),
+                    bordercolor=p["accent"], lightcolor=p["accent"],
+                    darkcolor=p["accent"], padding=(16, 10))
     style.map("Accent.TButton",
               background=[("active", p["accent_hover"]), ("pressed", p["header_bg2"])])
     style.configure("Success.TButton", background=p["success"],
                     foreground="#FFFFFF", font=font(12, bold=True))
     style.configure("Danger.TButton", background=p["danger"],
                     foreground="#FFFFFF", font=font(11, bold=True))
-    style.configure("Big.TButton", padding=(16, 12), font=font(14, bold=True))
+    style.configure("Big.TButton", padding=(18, 13), font=font(14, bold=True))
     style.configure("TEntry", font=font(12), fieldbackground=p["input_bg"],
-                    foreground=p["text"])
-    style.configure("TCombobox", font=font(11),
-                    fieldbackground=p["input_bg"], foreground=p["text"])
+                    foreground=p["text"], insertcolor=p["text"],
+                    bordercolor=p["border"], lightcolor=p["border"],
+                    darkcolor=p["border"], padding=(6, 5))
+    style.configure("TCombobox", font=font(11), padding=(6, 5),
+                    fieldbackground=p["input_bg"], foreground=p["text"],
+                    background=p["card_bg"], bordercolor=p["border"],
+                    lightcolor=p["border"], darkcolor=p["border"],
+                    insertcolor=p["text"])
+    style.map("TCombobox",
+              fieldbackground=[("readonly", p["input_bg"])],
+              foreground=[("readonly", p["text"])])
     style.configure("TRadiobutton", background=p["bg"],
                     foreground=p["text"], font=font(11))
-    style.configure("TNotebook", background=p["bg"], tabposition="n")
-    style.configure("TNotebook.Tab", padding=(14, 9), font=font(11, bold=True))
+    style.configure("TCheckbutton", background=p["bg"],
+                    foreground=p["text"], font=font(11))
+    style.map("TRadiobutton", background=[("active", p["bg"])])
+    style.map("TCheckbutton", background=[("active", p["bg"])])
+    style.configure("TNotebook", background=p["bg"], tabposition="n",
+                    borderwidth=0)
+    style.configure("TNotebook.Tab", padding=(18, 10), font=font(11, bold=True))
     style.map("TNotebook.Tab",
               background=[("selected", p["card_bg"]), ("!selected", p["bg"])],
-              foreground=[("selected", p["accent"]), ("!selected", p["text"])])
-    style.configure("Treeview", font=font(11), rowheight=34,
+              foreground=[("selected", p["accent"]), ("!selected", p["text"])],
+              expand=[("selected", (1, 1, 1, 0))])
+    style.configure("Treeview", font=font(11), rowheight=36,
                     background=p["row_bg"], fieldbackground=p["row_bg"],
-                    foreground=p["text"], bordercolor=p["border"])
+                    foreground=p["text"], bordercolor=p["border"],
+                    borderwidth=0)
     style.configure("Treeview.Heading", font=font(11, bold=True),
                     background=p["header_bg"], foreground="#FFFFFF",
-                    relief="flat")
+                    relief="flat", padding=(8, 7))
     style.map("Treeview", background=[("selected", p["selected_bg"])],
               foreground=[("selected", p["text"])])
     style.configure("TSeparator", background=p["border"])
     style.configure("TLabelframe", background=p["bg"], foreground=p["text"])
     style.configure("TLabelframe.Label", font=font(12, bold=True),
                     foreground=p["accent"], background=p["bg"])
+    style.configure("Vertical.TScrollbar", background=p["card_bg"],
+                    troughcolor=p["bg"], bordercolor=p["bg"],
+                    lightcolor=p["card_bg"], darkcolor=p["card_bg"],
+                    arrowcolor=p["muted"], borderwidth=0, arrowsize=13)
+    style.map("Vertical.TScrollbar",
+              background=[("active", p["border"])])
+    style.configure("Horizontal.TScrollbar", background=p["card_bg"],
+                    troughcolor=p["bg"], bordercolor=p["bg"],
+                    lightcolor=p["card_bg"], darkcolor=p["card_bg"],
+                    arrowcolor=p["muted"], borderwidth=0, arrowsize=13)
+    style.map("Horizontal.TScrollbar",
+              background=[("active", p["border"])])
+    # v6.15: plain-tk widgets (Text / Listbox / Canvas) follow the palette
+    # too — option_add covers every current and future instance.
+    try:
+        root.option_add("*Text.Background", p["card_bg"])
+        root.option_add("*Text.Foreground", p["text"])
+        root.option_add("*Text.InsertBackground", p["text"])
+        root.option_add("*Text.SelectBackground", p["selected_bg"])
+        root.option_add("*Text.SelectForeground", p["text"])
+        root.option_add("*Text.highlightColor", p["accent"])
+        root.option_add("*Listbox.Background", p["card_bg"])
+        root.option_add("*Listbox.Foreground", p["text"])
+        root.option_add("*Listbox.SelectBackground", p["selected_bg"])
+        root.option_add("*Listbox.SelectForeground", p["text"])
+        root.option_add("*TCombobox*Listbox.Background", p["input_bg"])
+        root.option_add("*TCombobox*Listbox.Foreground", p["text"])
+        root.option_add("*TCombobox*Listbox.SelectBackground", p["selected_bg"])
+    except Exception:
+        pass
     return p
 
 
@@ -277,8 +336,8 @@ def make_card(parent, title, value, subtitle="", accent="#0F766E",
     """
     p = palette(theme_name)
     frame = tk.Frame(parent, bg=p["card_bg"], highlightbackground=p["border"],
-                     highlightthickness=1, padx=14, pady=10)
-    accent_bar = tk.Frame(frame, bg=accent, width=5)
+                     highlightthickness=1, padx=16, pady=12)
+    accent_bar = tk.Frame(frame, bg=accent, width=4)
     accent_bar.pack(side="left", fill="y", padx=(0, 10))
     body = tk.Frame(frame, bg=p["card_bg"])
     body.pack(side="left", fill="both", expand=True)
