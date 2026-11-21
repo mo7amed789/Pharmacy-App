@@ -6,9 +6,9 @@
 النسخ الاحتياطية، الشهادات).
 
 الآلية:
-- check_for_update: يسأل GitHub API عن آخر commit على main ويقارنه بآخر
-  إصدار مثبّت (محفوظ في settings). أول تشغيل بعد التحديث يتسجل الإصدار
-  الحالي كأساس بصمت.
+- check_for_update: يقارن آخر commit على main بمراجعة Git المحلية أو
+  آخر تثبيت مثبت. لا يفترض أن كود الإنترنت مثبت في أول تشغيل.
+- فحص خلفي عند التشغيل وكل ساعة، وتنبيه بخياري التثبيت أو التأجيل 24 ساعة.
 - apply_update: ينزّل zip للـ commit، يفك ضغطه في مجلد مؤقت، ينسخ الملفات
   فوق مجلد البرنامج مع نسخة رجوع لكل ملف مستبدل في backups/code_update_*.
   الملفات والمجلدات المحلية في PRESERVE_* لا تُلمس أبداً، والمحدّث لا
@@ -18,9 +18,12 @@
 """
 
 import io
+import math
 import json
 import os
 import shutil
+import subprocess
+import time
 import tempfile
 import urllib.error
 import urllib.request
@@ -35,6 +38,46 @@ K_APPLIED_SHA = "update_applied_sha"
 K_APPLIED_AT = "update_applied_at"
 K_LAST_CHECK = "update_last_check"
 K_LAST_ERROR = "update_last_error"
+K_SNOOZE_SHA = "update_snooze_sha"
+K_SNOOZE_UNTIL = "update_snooze_until"
+CHECK_INTERVAL_MS = 60 * 60 * 1000
+SNOOZE_SECONDS = 24 * 60 * 60
+
+
+def local_git_sha(base_dir=None):
+    """Identify an actual checkout, never pretend a remote SHA is installed."""
+    base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(base_dir, ".git")):
+        return ""
+    try:
+        out = subprocess.run(["git", "-C", base_dir, "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
+        sha = out.stdout.strip()
+        return sha if out.returncode == 0 and len(sha) == 40 and all(c in "0123456789abcdef" for c in sha) else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def snooze_update(db, sha, now=None):
+    until = (time.time() if now is None else now) + SNOOZE_SECONDS
+    db.set_setting(K_SNOOZE_SHA, sha)
+    db.set_setting(K_SNOOZE_UNTIL, str(until))
+
+
+def notification_due(db, result, now=None):
+    if not result or result.get("status") != "update_available":
+        return False
+    sha = result.get("latest", {}).get("sha")
+    if not sha:
+        return False
+    if db.get_setting(K_SNOOZE_SHA, "") != sha:
+        return True
+    try:
+        until = float(db.get_setting(K_SNOOZE_UNTIL, "0"))
+    except (TypeError, ValueError):
+        return True
+    return not math.isfinite(until) or (time.time() if now is None else now) >= until
+
 
 # لا تُستبدل ولا تُحذف أبداً أثناء التحديث — بيانات المستخدم وإعداداته
 PRESERVE_FILES = {
@@ -115,12 +158,19 @@ def check_for_update(db):
     _set(db, K_LAST_CHECK, _now_str())
     _set(db, K_LAST_ERROR, "")
     applied = db.get_setting(K_APPLIED_SHA, "")
+    local = local_git_sha()
+    if local == latest["sha"]:
+        return {"status": "up_to_date", "latest": latest}
     if not applied:
-        # أول تشغيل بعد إضافة الميزة: النسخة المثبتة = أحدث كود (هو نزّلها
-        # للتو من GitHub)، فنسجّل الأساس بصمت بدون إزعاج.
-        _set(db, K_APPLIED_SHA, latest["sha"])
-        _set(db, K_APPLIED_AT, latest["date"])
-        return {"status": "up_to_date", "latest": latest, "baseline": True}
+        if local:
+            _set(db, K_APPLIED_SHA, local)
+            applied = local
+        else:
+            # A ZIP install has no trusted revision stamp on first run.
+            # Offer an explicit user-approved sync, never silently mark
+            # the remote as installed or claim this is a newer version.
+            return {"status": "update_available", "latest": latest,
+                    "applied": "", "unverified_install": True}
     if applied == latest["sha"]:
         return {"status": "up_to_date", "latest": latest}
     return {"status": "update_available", "latest": latest, "applied": applied}
@@ -241,7 +291,7 @@ def status_text(db):
         parts.append("الإصدار المثبّت: %s%s" % (
             info["sha"][:8], (" — " + info["at"]) if info["at"] else ""))
     else:
-        parts.append("لم يُسجّل إصدار بعد — سيُسجّل عند أول فحص.")
+        parts.append("نسخة التثبيت غير مسجلة؛ لن يُفترض أن آخر كود على الإنترنت مثبت محلياً.")
     last = db.get_setting(K_LAST_CHECK, "")
     if last:
         parts.append("آخر فحص: " + last)

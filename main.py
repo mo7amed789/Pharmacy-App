@@ -262,7 +262,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.28", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.29", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -496,7 +496,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.28 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.29 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         # v6.20: screen-aware default size + sensible minimum + the
         # window reopens with the size, position and maximized state it
@@ -594,7 +594,12 @@ class App:
         self.refresh_dashboard()
         self.db.audit(self.username, "login", "role=%s" % self.role)
         # v6.12: فحص تحديثات البرنامج من GitHub في الخلفية عند التشغيل
-        self._startup_update_check()
+        self._pending_update = getattr(self, "_pending_update", None)
+        self._update_check_busy = False
+        self._update_installing = False
+        self._update_restart_required = False
+        self._update_notice = None
+        self._update_timer = self.root.after(3000, self._startup_update_check)
         # v6.26: سحب فواتير الهاتف من السحابة (الوضع السحابي) كل 15 ثانية
         # — يعمل فقط عند تفعيل المزامنة، ولا يؤثر على العمل المحلي.
         try:
@@ -5541,10 +5546,12 @@ class App:
                                            command=self.update_apply_now)
         self.btn_update_apply.pack(anchor="w", pady=4)
         self.btn_update_apply.config(state="disabled")
-        self._pending_update = None
+        self._pending_update = getattr(self, "_pending_update", None)
         self.lbl_update = ttk.Label(f, text=self._update_status_text(), style="Muted.TLabel",
                                     wraplength=700, justify="left")
         self.lbl_update.pack(anchor="w", pady=2)
+        ttk.Label(f, text="فحص تلقائي عند التشغيل وكل ساعة. لاحقاً يؤجل التنبيه 24 ساعة للتحديث نفسه؛ لا تثبيت دون اختيارك.", style="Muted.TLabel", wraplength=700).pack(anchor="w", pady=2)
+        self._refresh_update_ui()
         ttk.Label(f, text="البرنامج يفحص GitHub عند كل تشغيل، وعند وجود كود جديد يمكنك تثبيته من هنا. "
                           "بياناتك (قاعدة البيانات والإعدادات والنسخ الاحتياطية) لا تتأثر بالتحديث أبداً، "
                           "وبعد التثبيت أعد تشغيل البرنامج.",
@@ -5913,82 +5920,134 @@ class App:
             self.lbl_update.config(text=self._update_status_text())
         except Exception:
             pass
-        available = bool(result and result.get("status") == "update_available")
         if result and result.get("status") == "update_available":
-            self._pending_update = result["latest"]
+            self._pending_update = dict(result["latest"])
+            self._pending_update["unverified_install"] = result.get("unverified_install", False)
+        elif result and result.get("status") == "up_to_date":
+            self._pending_update = None
+        available = bool(getattr(self, "_pending_update", None)) and not getattr(self, "_update_installing", False) and not getattr(self, "_update_restart_required", False)
         try:
             self.btn_update_apply.config(state="normal" if available else "disabled")
         except Exception:
             pass
 
     def _startup_update_check(self):
-        """فحص صامت عند التشغيل: لو فيه تحديث يظهر بانر فقط."""
-        import cloud_sync
+        """Launch + hourly background check. No install without user action."""
         import updater
-        db_path = self.db.path
-
-        def work():
-            db = DB(path=db_path, init=False)
+        timer = getattr(self, "_update_timer", None)
+        if timer:
             try:
-                return updater.check_for_update(db)
-            finally:
-                db.close()
-
-        def done(result, error):
-            def ui():
-                self._refresh_update_ui(result)
-                if result and result.get("status") == "update_available":
-                    msg = result["latest"].get("message") or ""
-                    self.show_banner("🔄 يوجد تحديث جديد للبرنامج%s — راجع الإعدادات ← تحديثات البرنامج"
-                                     % ((": " + msg[:60]) if msg else ""), "info")
-            self._ui_post(ui)
-        cloud_sync.run_in_background(work, done)
+                self.root.after_cancel(timer)
+            except Exception:
+                pass
+        self._update_timer = self.root.after(updater.CHECK_INTERVAL_MS, self._startup_update_check)
+        self._run_update_check(manual=False)
 
     def update_check_now(self):
-        """زر «التحقق الآن»: فحص في الخلفية مع رسالة نتيجة واضحة."""
+        self._run_update_check(manual=True)
+
+    def _run_update_check(self, manual=False):
         import cloud_sync
         import updater
-        self.btn_update_check.config(state="disabled")
+        if getattr(self, "_update_check_busy", False) or getattr(self, "_update_installing", False) or getattr(self, "_update_restart_required", False):
+            return
+        self._update_check_busy = True
+        if hasattr(self, "btn_update_check"):
+            self.btn_update_check.config(state="disabled")
         db_path = self.db.path
-
         def work():
             db = DB(path=db_path, init=False)
             try:
                 return updater.check_for_update(db)
             finally:
                 db.close()
-
         def done(result, error):
             def ui():
-                self.btn_update_check.config(state="normal")
+                self._update_check_busy = False
+                if hasattr(self, "btn_update_check"):
+                    self.btn_update_check.config(state="normal")
                 self._refresh_update_ui(result)
-                if error is not None:
-                    messagebox.showerror("خطأ في فحص التحديثات", str(error))
-                elif result.get("status") == "error":
-                    messagebox.showerror("خطأ في فحص التحديثات", result["error"])
-                elif result.get("status") == "update_available":
-                    messagebox.showinfo("تحديث متاح",
-                                        "يوجد تحديث جديد: %s\nاضغط «تحميل وتثبيت التحديث»."
-                                        % (result["latest"].get("message") or ""))
-                else:
-                    messagebox.showinfo("لا يوجد تحديث", "البرنامج على آخر إصدار ✅")
+                if error is not None or not result or result.get("status") == "error":
+                    if manual:
+                        messagebox.showerror("فحص التحديثات", str(error or (result or {}).get("error", "تعذر الفحص")))
+                    return
+                if result.get("status") == "update_available":
+                    if manual or updater.notification_due(self.db, result):
+                        self._show_update_notice(result)
+                elif manual:
+                    messagebox.showinfo("التحديثات", "النسخة المسجلة تطابق آخر كود على main")
             self._ui_post(ui)
         cloud_sync.run_in_background(work, done)
+
+    def _show_update_notice(self, result):
+        import updater
+        existing = getattr(self, "_update_notice", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            return
+        latest = dict(result["latest"])
+        latest["unverified_install"] = result.get("unverified_install", False)
+        self._pending_update = latest
+        win = tk.Toplevel(self.root)
+        self._update_notice = win
+        win.title("تحديث البرنامج")
+        ui_theme.fit_dialog(win, 540, 310)
+        win.transient(self.root)
+        # Modeless: never grab the cashier keyboard or interrupt a sale.
+        def display(text):
+            if sys.platform != "win32" and receipt_printer is not None:
+                return receipt_printer.visual_order(receipt_printer.shape_arabic(text))
+            return text
+        title = "تحديث متاح للبرنامج" if not latest["unverified_install"] else "تحقق من نسخة البرنامج"
+        ttk.Label(win, text=display(title), font=("Segoe UI", 16, "bold")).pack(padx=18, pady=(18,8))
+        lines = (["لا يمكن تحديد نسخة التثبيت الحالية.", "يمكنك تنزيل آخر كود من main باختيارك."] if latest["unverified_install"] else ["يوجد كود أحدث على فرع main جاهز للتنزيل."])
+        lines += ["لن يثبت أي تحديث دون موافقتك.", "احفظ الشغل وأوقف سيرفر الموبايل قبل التثبيت.", "لاحقاً = تذكير بعد 24 ساعة لهذا التحديث."]
+        ttk.Label(win, text="\n".join(display(line) for line in lines), justify="right", anchor="e", wraplength=490).pack(fill="x", padx=18, pady=6)
+        ttk.Label(win, text=latest["sha"][:12], style="Muted.TLabel").pack(padx=18, pady=4)
+        footer = ttk.Frame(win)
+        footer.pack(side="bottom", fill="x", padx=18, pady=16)
+        def dismiss():
+            updater.snooze_update(self.db, latest["sha"])
+            win.destroy()
+            self._update_notice = None
+        def install():
+            # Use the SHA shown in this notice, not a later background result.
+            self._pending_update = latest
+            win.destroy()
+            self._update_notice = None
+            self.update_apply_now()
+        ttk.Button(footer, text=display("تحميل وتثبيت الآن"), command=install, style="Accent.TButton").pack(side="right", padx=4)
+        ttk.Button(footer, text=display("لاحقاً: 24 ساعة"), command=dismiss).pack(side="right", padx=4)
+        win.protocol("WM_DELETE_WINDOW", dismiss)
 
     def update_apply_now(self):
         """زر «تحميل وتثبيت التحديث»: تنزيل وتثبيت مع نسخة رجوع."""
         import cloud_sync
         import updater
-        if not self._pending_update:
+        if getattr(self, "_update_installing", False) or getattr(self, "_update_restart_required", False):
+            return
+        if not getattr(self, "_pending_update", None):
             messagebox.showinfo("لا يوجد تحديث", "افحص التحديثات أولاً — لا يوجد تحديث معلّق.")
             return
-        latest = self._pending_update
+        latest = dict(self._pending_update)
+        if getattr(self, "cart", []) or getattr(self, "purchase_lines", []):
+            messagebox.showinfo("احفظ العمل أولاً", "احفظ أو امسح سلة البيع ومسودة المشتريات قبل التثبيت")
+            return
+        server = getattr(self, "mobile_server", None)
+        if server is not None and server.running:
+            messagebox.showinfo("أوقف سيرفر الموبايل", "أكمل فواتير الهواتف وأوقف سيرفر الموبايل من تبويبه قبل التثبيت")
+            return
+        if not self.is_admin:
+            messagebox.showinfo("تحديث البرنامج", "اطلب من المدير تثبيت التحديث من حسابه")
+            return
         if not messagebox.askyesno("تثبيت التحديث",
                                    "سيُنزَّل آخر كود من GitHub ويُثبَّت فوق مجلد البرنامج.\n"
                                    "قاعدة البيانات والإعدادات والنسخ الاحتياطية لن تتأثر،\n"
                                    "وستُحفظ نسخة رجوع من الملفات المستبدلة. متابعة؟"):
             return
-        self.btn_update_apply.config(state="disabled")
+        self._update_installing = True
+        if hasattr(self, "btn_update_apply"):
+            self.btn_update_apply.config(state="disabled")
         self.show_banner("⏳ جاري تنزيل التحديث وتثبيته...", "info")
         db_path = self.db.path
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -6003,7 +6062,10 @@ class App:
 
         def done(result, error):
             def ui():
-                self._pending_update = None
+                self._update_installing = False
+                if error is None:
+                    self._pending_update = None
+                    self._update_restart_required = True
                 self._refresh_update_ui({"status": "up_to_date"} if error is None else None)
                 if error is not None:
                     self.show_banner("❌ فشل تثبيت التحديث", "error")

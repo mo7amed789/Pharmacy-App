@@ -1,3 +1,7 @@
+## v6.29: تنبيه تحديثات تلقائي
+
+فحص خلفي عند التشغيل وكل ساعة، مع تحميل وتثبيت باختيار المدير أو تأجيل التنبيه 24 ساعة. لا تثبيت تلقائي. [التفاصيل والاختبارات](docs/changelog/README_AR_V6.29.md).
+
 # Pharmacy Enterprise — نظام إدارة صيدلية
 
 Offline-first pharmacy management app for Windows, Arabic-first UI, in Egyptian pounds (EGP).

@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,6 +49,9 @@ class UpdaterTestBase(unittest.TestCase):
         self.db, self.db_path = fresh_db()
         self.base = tempfile.mkdtemp(prefix="app_dir_")
         self.addCleanup(self._close)
+        self.git_patch = patch.object(updater, "local_git_sha", return_value="a"*40)
+        self.git_patch.start()
+        self.addCleanup(self.git_patch.stop)
         # HTTP وهمي
         self._real_json, self._real_bytes = updater._http_json, updater._http_bytes
         updater._http_json = lambda url, timeout=20: FAKE_LATEST_COMMIT
@@ -88,18 +92,27 @@ FAKE_LATEST_COMMIT = {
 
 
 class TestCheckForUpdate(UpdaterTestBase):
-    def test_first_run_records_baseline_silently(self):
+    def test_first_run_uses_local_revision_not_remote(self):
         result = updater.check_for_update(self.db)
-        self.assertEqual(result["status"], "up_to_date")
-        self.assertTrue(result.get("baseline"))
-        self.assertEqual(self.db.get_setting(updater.K_APPLIED_SHA),
-                         FAKE_LATEST["sha"])
+        self.assertEqual(result["status"], "update_available")
+        self.assertEqual(self.db.get_setting(updater.K_APPLIED_SHA), "a"*40)
 
     def test_same_sha_is_up_to_date(self):
-        updater.check_for_update(self.db)
+        self.db.set_setting(updater.K_APPLIED_SHA, FAKE_LATEST["sha"])
         result = updater.check_for_update(self.db)
         self.assertEqual(result["status"], "up_to_date")
-        self.assertNotIn("baseline", result)
+
+    def test_matching_checkout_after_manual_pull(self):
+        self.db.set_setting(updater.K_APPLIED_SHA, "older")
+        with patch.object(updater, "local_git_sha", return_value=FAKE_LATEST["sha"]):
+            self.assertEqual(updater.check_for_update(self.db)["status"], "up_to_date")
+
+    def test_unknown_zip_revision_never_silently_baselines(self):
+        with patch.object(updater, "local_git_sha", return_value=""):
+            result = updater.check_for_update(self.db)
+        self.assertEqual(result["status"], "update_available")
+        self.assertTrue(result["unverified_install"])
+        self.assertFalse(self.db.get_setting(updater.K_APPLIED_SHA, ""))
 
     def test_new_sha_is_update_available(self):
         updater.check_for_update(self.db)
