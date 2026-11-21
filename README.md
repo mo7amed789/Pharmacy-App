@@ -67,6 +67,22 @@ Files: `supabase_client.py` (stdlib-only PostgREST client),
 `cloud_sync.py` (mapping + push/pull), `tests/test_cloud_sync.py`
 (local tests plus a live API round-trip that runs when the env vars are set).
 
+## Auto-update from GitHub — v6.12
+
+The installed app can update itself when new code lands on `main`:
+
+- On every startup it quietly checks the repo's latest commit (public repo,
+  no key needed). A banner appears only when an update exists.
+- Settings → 🔄 تحديثات البرنامج: "check now", "download & install", and a
+  status line (installed version, last check, last error).
+- Installs overlay code files only. The local database, `supabase_config.json`,
+  backups, certs, receipts and logs are never touched; every replaced file is
+  backed up under `backups/code_update_*/` and a mid-update failure rolls
+  everything back and shows a clear Arabic error. Restart the app after
+  installing.
+
+Files: `updater.py`, Settings section in `main.py`, `tests/test_updater.py`.
+
 ## Full Arabic guide
 
 See `README_AR.md` (and `README_AR_V6.9.md` for the latest changes).

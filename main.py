@@ -488,7 +488,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.10 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.12 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         root.geometry("1280x800")
         root.minsize(1100, 650)
@@ -571,6 +571,8 @@ class App:
         self.update_topbar()
         self.refresh_dashboard()
         self.db.audit(self.username, "login", "role=%s" % self.role)
+        # v6.12: فحص تحديثات البرنامج من GitHub في الخلفية عند التشغيل
+        self._startup_update_check()
 
     # ---------- thread-safe UI queue ----------
     def _ui_post(self, fn):
@@ -5119,6 +5121,24 @@ class App:
         self.lbl_cloud.pack(anchor="w", pady=2)
         ttk.Button(f, text="🔄 تحديث حالة المزامنة",
                    command=lambda: self.lbl_cloud.config(text=self._cloud_status_text())).pack(anchor="w", pady=2)
+        # ---------- v6.12: 🔄 تحديثات البرنامج ----------
+        ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
+        ttk.Label(f, text="🔄 تحديثات البرنامج:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        self.btn_update_check = ttk.Button(f, text="🔍 التحقق من التحديثات الآن",
+                                           command=self.update_check_now)
+        self.btn_update_check.pack(anchor="w", pady=4)
+        self.btn_update_apply = ttk.Button(f, text="⬇️ تحميل وتثبيت التحديث",
+                                           command=self.update_apply_now)
+        self.btn_update_apply.pack(anchor="w", pady=4)
+        self.btn_update_apply.config(state="disabled")
+        self._pending_update = None
+        self.lbl_update = ttk.Label(f, text=self._update_status_text(), style="Muted.TLabel",
+                                    wraplength=700, justify="left")
+        self.lbl_update.pack(anchor="w", pady=2)
+        ttk.Label(f, text="البرنامج يفحص GitHub عند كل تشغيل، وعند وجود كود جديد يمكنك تثبيته من هنا. "
+                          "بياناتك (قاعدة البيانات والإعدادات والنسخ الاحتياطية) لا تتأثر بالتحديث أبداً، "
+                          "وبعد التثبيت أعد تشغيل البرنامج.",
+                  style="Muted.TLabel", wraplength=700, justify="left").pack(anchor="w", pady=2)
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(f, text="سجل التدقيق (آخر 50 إجراء):", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.txt_audit = tk.Text(f, width=100, height=12, font=("Segoe UI", 10))
@@ -5403,6 +5423,124 @@ class App:
                 sent, failed = result
                 self.show_banner("✅ اكتمل الرفع للسحابة", "success")
                 messagebox.showinfo("تم", "اكتمل الرفع: %d صنف، فشل %d" % (sent, failed))
+            self._ui_post(ui)
+        cloud_sync.run_in_background(work, done)
+
+    # ---------- v6.12: تحديثات البرنامج من GitHub ----------
+    def _update_status_text(self):
+        try:
+            import updater
+            return updater.status_text(self.db)
+        except Exception as e:
+            return "فحص التحديثات غير متاح: %s" % e
+
+    def _refresh_update_ui(self, result=None):
+        """تحديث سطر الحالة وزر التثبيت بعد أي فحص (خيط الواجهة فقط)."""
+        try:
+            self.lbl_update.config(text=self._update_status_text())
+        except Exception:
+            pass
+        available = bool(result and result.get("status") == "update_available")
+        if result and result.get("status") == "update_available":
+            self._pending_update = result["latest"]
+        try:
+            self.btn_update_apply.config(state="normal" if available else "disabled")
+        except Exception:
+            pass
+
+    def _startup_update_check(self):
+        """فحص صامت عند التشغيل: لو فيه تحديث يظهر بانر فقط."""
+        import cloud_sync
+        import updater
+        db_path = self.db.path
+
+        def work():
+            db = DB(path=db_path, init=False)
+            try:
+                return updater.check_for_update(db)
+            finally:
+                db.close()
+
+        def done(result, error):
+            def ui():
+                self._refresh_update_ui(result)
+                if result and result.get("status") == "update_available":
+                    msg = result["latest"].get("message") or ""
+                    self.show_banner("🔄 يوجد تحديث جديد للبرنامج%s — راجع الإعدادات ← تحديثات البرنامج"
+                                     % ((": " + msg[:60]) if msg else ""), "info")
+            self._ui_post(ui)
+        cloud_sync.run_in_background(work, done)
+
+    def update_check_now(self):
+        """زر «التحقق الآن»: فحص في الخلفية مع رسالة نتيجة واضحة."""
+        import cloud_sync
+        import updater
+        self.btn_update_check.config(state="disabled")
+        db_path = self.db.path
+
+        def work():
+            db = DB(path=db_path, init=False)
+            try:
+                return updater.check_for_update(db)
+            finally:
+                db.close()
+
+        def done(result, error):
+            def ui():
+                self.btn_update_check.config(state="normal")
+                self._refresh_update_ui(result)
+                if error is not None:
+                    messagebox.showerror("خطأ في فحص التحديثات", str(error))
+                elif result.get("status") == "error":
+                    messagebox.showerror("خطأ في فحص التحديثات", result["error"])
+                elif result.get("status") == "update_available":
+                    messagebox.showinfo("تحديث متاح",
+                                        "يوجد تحديث جديد: %s\nاضغط «تحميل وتثبيت التحديث»."
+                                        % (result["latest"].get("message") or ""))
+                else:
+                    messagebox.showinfo("لا يوجد تحديث", "البرنامج على آخر إصدار ✅")
+            self._ui_post(ui)
+        cloud_sync.run_in_background(work, done)
+
+    def update_apply_now(self):
+        """زر «تحميل وتثبيت التحديث»: تنزيل وتثبيت مع نسخة رجوع."""
+        import cloud_sync
+        import updater
+        if not self._pending_update:
+            messagebox.showinfo("لا يوجد تحديث", "افحص التحديثات أولاً — لا يوجد تحديث معلّق.")
+            return
+        latest = self._pending_update
+        if not messagebox.askyesno("تثبيت التحديث",
+                                   "سيُنزَّل آخر كود من GitHub ويُثبَّت فوق مجلد البرنامج.\n"
+                                   "قاعدة البيانات والإعدادات والنسخ الاحتياطية لن تتأثر،\n"
+                                   "وستُحفظ نسخة رجوع من الملفات المستبدلة. متابعة؟"):
+            return
+        self.btn_update_apply.config(state="disabled")
+        self.show_banner("⏳ جاري تنزيل التحديث وتثبيته...", "info")
+        db_path = self.db.path
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        sha = latest["sha"]
+
+        def work():
+            db = DB(path=db_path, init=False)
+            try:
+                return updater.apply_update(db, base_dir, sha)
+            finally:
+                db.close()
+
+        def done(result, error):
+            def ui():
+                self._pending_update = None
+                self._refresh_update_ui({"status": "up_to_date"} if error is None else None)
+                if error is not None:
+                    self.show_banner("❌ فشل تثبيت التحديث", "error")
+                    messagebox.showerror("فشل التحديث", str(error))
+                    return
+                updated, rollback_dir = result
+                self.show_banner("✅ تم تثبيت التحديث — أعد تشغيل البرنامج", "success")
+                messagebox.showinfo("تم التحديث",
+                                    "تم تثبيت التحديث (%d ملف).\nأغلق البرنامج وشغّله من جديد "
+                                    "ليعمل بالإصدار الجديد." % updated)
             self._ui_post(ui)
         cloud_sync.run_in_background(work, done)
 
