@@ -733,10 +733,6 @@ def setup_main_window(root, db):
     later runs restore the saved size/position and maximized state.
     Everything is wrapped so a bad saved value can never block startup.
     """
-    try:
-        root.minsize(1024, 600)
-    except Exception:
-        pass
     saved = get_ui_pref(db, "ui_geometry", "")
     maximized = get_ui_pref(db, "ui_maximized", "") == "1"
     try:
@@ -744,6 +740,14 @@ def setup_main_window(root, db):
         sh = root.winfo_screenheight()
     except Exception:
         sw, sh = 1280, 800
+    # v6.21: the minimum must fit the real screen — a 1024x600 minimum
+    # is wrong on a 1366x768 laptop once the taskbar takes its share,
+    # so cap it below the actual screen size.
+    try:
+        root.minsize(min(1024, max(sw - 40, 640)),
+                     min(600, max(sh - 120, 480)))
+    except Exception:
+        pass
     placed = False
     if _geometry_ok(saved, sw, sh):
         try:
