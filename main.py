@@ -261,7 +261,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.18.1", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.19", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -495,7 +495,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.18.1 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.19 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         root.geometry("1280x800")
         root.minsize(1100, 650)
@@ -2828,7 +2828,12 @@ class App:
                    command=self._inv_open_detail).pack(padx=10, pady=(6, 2))
         ttk.Button(win, text="✏️ تعديل الفاتورة المحددة",
                    command=self._inv_edit_selected,
-                   style="Accent.TButton").pack(padx=10, pady=(0, 6))
+                   style="Accent.TButton").pack(padx=10, pady=(0, 2))
+        # v6.19: direct delete (full void) from the invoices list — same
+        # atomic return path as the reports-tab dialog and the phone.
+        ttk.Button(win, text="🗑️ حذف الفاتورة المحددة (إرجاع كامل)",
+                   command=self._inv_void_selected,
+                   style="Danger.TButton").pack(padx=10, pady=(0, 6))
         win.protocol("WM_DELETE_WINDOW", self._inv_close)
         self._inv_refresh()
 
@@ -2953,6 +2958,11 @@ class App:
                        [(it.get("trade_en") or "", it.get("pack_level") or "",
                          it.get("qty_display"), it.get("unit_price"),
                          it.get("line_total")) for it in items])).pack(side="left", padx=4)
+        # v6.19: direct delete (full void) from the detail window too —
+        # the window closes only when the void actually happened.
+        ttk.Button(btns, text="🗑️ حذف الفاتورة",
+                   command=lambda: self._void_sale_row(s, parent=win) and win.destroy(),
+                   style="Danger.TButton").pack(side="left", padx=4)
 
     # ---------- v5.5: تعديل الفاتورة (قبل الطباعة أو بعدها) ----------
     def _inv_edit_selected(self):
@@ -2961,6 +2971,14 @@ class App:
             messagebox.showinfo("تنبيه", "اختر فاتورة من القائمة أولاً")
             return
         self.edit_invoice_dialog(s["id"])
+
+    def _inv_void_selected(self):
+        """v6.19: delete (full-void) the invoice selected in the list."""
+        s = self._inv_selected()
+        if not s:
+            messagebox.showinfo("تنبيه", "اختر فاتورة من القائمة أولاً")
+            return
+        self._void_sale_row(s, parent=self._inv_win)
 
     def mobile_edit_selected(self):
         sale = self._selected_mobile_sale()
@@ -3338,21 +3356,46 @@ class App:
         if not row:
             messagebox.showerror("خطأ", "الفاتورة غير موجودة")
             return
-        if messagebox.askyesno("تأكيد المرتجع", "إرجاع كامل الفاتورة %s بمبلغ %s؟\nسيتم إعادة الكمية للمخزون." % (inv, money(row["total"]))):
-            reason = simpledialog.askstring("سبب المرتجع", "سبب الإرجاع (اختياري):") or ""
-            try:
-                # STEP2 (2B): the refund is charged to the CURRENT shift
-                # when one is open; the original shift keeps its history.
-                self.db.return_sale(row["id"], self.username,
-                                    return_shift_id=self.current_shift["id"] if self.current_shift else None,
-                                    reason=reason.strip())
-                self.db.audit(self.username, "return_sale", inv)
-            except ValueError as e:
-                messagebox.showerror("خطأ", str(e))
-                return
-            messagebox.showinfo("تم", "تم إرجاع الفاتورة")
-            self.reports_refresh()
-            self.inv_refresh()
+        self._void_sale_row(dict(row))
+
+    def _void_sale_row(self, s, parent=None):
+        """v6.19: the one «حذف الفاتورة» path — confirm, optional reason,
+        one atomic return_sale (stock back, credit reversed, status ->
+        returned, sale_returns + audit), then refresh every open list.
+        Used by the reports-tab dialog, the invoices list window and
+        the invoice detail window.  Returns True when the invoice was
+        actually voided."""
+        if not s:
+            return False
+        if s.get("status") != "completed":
+            messagebox.showinfo("لا يمكن الحذف",
+                                "هذه الفاتورة مُرجعة بالفعل — لا يمكن حذفها مرة أخرى.",
+                                parent=parent)
+            return False
+        if not messagebox.askyesno(
+                "تأكيد حذف الفاتورة",
+                "حذف الفاتورة %s بمبلغ %s؟\n\n"
+                "كل الكميات ترجع للمخزون، وأي دين آجل على الفاتورة يُلغى، "
+                "وحالتها تصبح «مُرجعة».\nلا يمكن التراجع عن الحذف." % (
+                    s["invoice_no"], money(s["total"])), parent=parent):
+            return False
+        reason = simpledialog.askstring("سبب الحذف", "سبب الحذف (اختياري):",
+                                        parent=parent) or ""
+        try:
+            # STEP2 (2B): the refund is charged to the CURRENT shift
+            # when one is open; the original shift keeps its history.
+            self.db.return_sale(s["id"], self.username,
+                                return_shift_id=self.current_shift["id"] if self.current_shift else None,
+                                reason=reason.strip())
+        except ValueError as e:
+            messagebox.showerror("خطأ", str(e), parent=parent)
+            return False
+        messagebox.showinfo("تم", "حُذفت الفاتورة %s (إرجاع كامل) — رجعت الكميات للمخزون." % s["invoice_no"],
+                            parent=parent)
+        self.reports_refresh()
+        self.inv_refresh()
+        self._inv_refresh()
+        return True
 
     def _export_csv(self, filename, header, rows):
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
