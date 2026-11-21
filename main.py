@@ -488,7 +488,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.13 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.14 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         root.geometry("1280x800")
         root.minsize(1100, 650)
@@ -535,16 +535,29 @@ class App:
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill="both", expand=True, padx=6, pady=6)
         self.mobile_server = None
+        # v6.14: lazy tabs — only the dashboard builds at startup; every
+        # other tab is a placeholder frame until first opened, so the
+        # app paints fast instead of building 10 tabs of widgets and
+        # running their data loads before the window appears. Tab order
+        # and indices are unchanged (goto_tab/_on_tab_changed rely on them).
+        self._tab_built = {}
+        self._tab_builders = {}
         self.build_dashboard()
-        self.build_pos()
-        self.build_inventory()
-        self.build_purchases()
-        self.build_customers()
-        self.build_reports()
-        self.build_cash()
-        self.build_settings()
-        self.build_ai()
-        self.build_mobile()
+        self._tab_built[0] = True
+        _lazy = [
+            ("🛒 الكاشير (POS)", self.build_pos),
+            ("📦 المخزون", self.build_inventory),
+            ("🧾 المشتريات والموردين", self.build_purchases),
+            ("👥 العملاء", self.build_customers),
+            ("📊 التقارير", self.build_reports),
+            ("💰 الخزنة والورديات", self.build_cash),
+            ("⚙️ الإعدادات", self.build_settings),
+            ("🤖 التنبؤ الذكي", self.build_ai),
+            ("📱 الموبايل والطباعة", self.build_mobile),
+        ]
+        for _idx, (_title, _builder) in enumerate(_lazy, start=1):
+            self._tab_builders[_idx] = _builder
+            self.notebook.add(ttk.Frame(self.notebook), text=_title)
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
         # Thread-safe UI queue: background threads (hotspot / server)
         # must NEVER call Tk methods directly — Python 3.12 raises
@@ -809,6 +822,7 @@ class App:
 
     def goto_tab(self, index):
         try:
+            self._ensure_tab(index)
             self.notebook.select(index)
         except Exception:
             pass
@@ -840,9 +854,24 @@ class App:
             "• خذ نسخة احتياطية من الإعدادات قبل أي تحديث.")
         txt.config(state="disabled")
 
+    def _ensure_tab(self, idx):
+        """v6.14: build a tab's real content into its placeholder frame,
+        once, the first time the tab is shown. Refresh methods called
+        before that (from sales, live poll, other tabs) no-op on their
+        hasattr guards; the first open always builds with fresh data."""
+        if self._tab_built.get(idx):
+            return
+        builder = self._tab_builders.get(idx)
+        if builder is None:
+            return
+        self._tab_built[idx] = True  # before building: no re-entry
+        frame = self.notebook.nametowidget(self.notebook.tabs()[idx])
+        builder(frame)
+
     def _on_tab_changed(self, event=None):
         try:
             idx = self.notebook.index("current")
+            self._ensure_tab(idx)
             if idx == 0:
                 self.refresh_dashboard()
             elif idx == 9:
@@ -921,18 +950,16 @@ class App:
             low = self.db.low_stock()
             exp30 = self.db.near_expiry(30)
             _rows, _tc, ts = self.db.report_inventory_value()
-            crit = 0
-            try:
-                if ai_forecast is not None:
-                    rl = ai_forecast.generate_reorder_list(self.db, horizon_days=30, lead_time_days=3, safety_days=2)
-                    crit = len([x for x in rl if x.get("urgency") == "حرجة"])
-            except Exception:
-                crit = 0
+            # v6.14: التنبؤ الذكي (طلبات حرجة) يكلف ~1-2 ثانية على كتالوج
+            # كبير — لا يعمل أبداً على خيط الواجهة. يُحسب في الخلفية
+            # ويُخزن 10 دقائق، والبطاقة تتحدث عند جاهزية النتيجة.
+            self._kick_dash_ai()
+            crit_text = str(getattr(self, "_dash_crit_count", "…"))
             vals = {
                 "sales": money(r["total"]), "profit": money(r["net_profit"]),
                 "cash": money(r["cash"]), "invoices": str(r["count"]),
                 "low": str(len(low)), "expiry": str(len(exp30)),
-                "critical": str(crit), "inv_value": money(ts),
+                "critical": crit_text, "inv_value": money(ts),
             }
             subs = {
                 "sales": "كارت: %s  •  آجل: %s" % (money(r["card"]), money(r["credit"])),
@@ -974,13 +1001,52 @@ class App:
         except Exception:
             pass
 
+    def _kick_dash_ai(self):
+        """v6.14: حساب «طلبات حرجة» في الخلفية — مرة كل 10 دقائق كحد
+        أقصى، ولا يتزامن حسابان. النتيجة تصل للبطاقة عبر طابور الواجهة."""
+        if ai_forecast is None:
+            self._dash_crit_count = 0
+            return
+        import time as _t
+        now = _t.monotonic()
+        if getattr(self, "_dash_ai_running", False):
+            return
+        if now - getattr(self, "_dash_ai_last", 0.0) < 600:
+            return
+        self._dash_ai_running = True
+        import cloud_sync
+        db_path = self.db.path
+
+        def work():
+            db = DB(path=db_path, init=False)
+            try:
+                rl = ai_forecast.generate_reorder_list(
+                    db, horizon_days=30, lead_time_days=3, safety_days=2)
+                return len([x for x in rl if x.get("urgency") == "حرجة"])
+            finally:
+                db.close()
+
+        def done(result, error):
+            def ui():
+                self._dash_ai_running = False
+                self._dash_ai_last = _t.monotonic()
+                if error is None and result is not None:
+                    self._dash_crit_count = result
+                    card = self.dash_cards.get("critical")
+                    if card:
+                        card[1].config(text=str(result))
+            self._ui_post(ui)
+
+        cloud_sync.run_in_background(work, done)
+
     # ---------- shared helpers ----------
-    def _scrollable_tab(self, title):
+    def _scrollable_tab(self, title, outer=None):
         """v5.0: one shared scrollable tab (same Canvas+Scrollbar pattern
         as the Mobile tab since v4.4). Returns the INNER frame — all
         existing pack() calls on `tab` keep working unchanged."""
-        outer = ttk.Frame(self.notebook)
-        self.notebook.add(outer, text=title)
+        if outer is None:
+            outer = ttk.Frame(self.notebook)
+            self.notebook.add(outer, text=title)
         canvas = tk.Canvas(outer, highlightthickness=0)
         vbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vbar.set)
@@ -1186,9 +1252,10 @@ class App:
         self.refresh_pos_totals()
 
     # ---------- POS ----------
-    def build_pos(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="🛒 الكاشير (POS)")
+    def build_pos(self, tab=None):
+        if tab is None:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="🛒 الكاشير (POS)")
         # Big scan / search bar at the top
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=10, pady=(10, 4))
@@ -1321,6 +1388,8 @@ class App:
         self.pos_complete_sale()
 
     def pos_search_refresh(self):
+        if not hasattr(self, "list_search"):
+            return  # v6.14: الكاشير لم يُبن بعد
         q = self.e_search.get()
         self.search_results = self.db.search_drugs(q, limit=60)
         self.fill_drug_search_tree(self.list_search, self.search_results)
@@ -1680,9 +1749,10 @@ class App:
         ttk.Button(win, text="إضافة دواء جديد بهذا الباركود", command=lambda: (win.destroy(), self.drug_dialog(prefill_barcode=code))).pack(pady=4)
 
     # ---------- Inventory ----------
-    def build_inventory(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="📦 المخزون")
+    def build_inventory(self, tab=None):
+        if tab is None:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="📦 المخزون")
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="بحث:").pack(side="left")
@@ -1717,6 +1787,8 @@ class App:
         self.inv_refresh()
 
     def inv_refresh(self):
+        if not hasattr(self, "tree_inv"):
+            return  # v6.14: التبويب لم يُبن بعد — يُبنى ببيانات حديثة عند أول فتح
         q = self.e_inv_search.get() if hasattr(self, "e_inv_search") else ""
         for i in self.tree_inv.get_children():
             self.tree_inv.delete(i)
@@ -2084,9 +2156,10 @@ class App:
         messagebox.showinfo("تم", "تم تصدير %d دواء إلى:\n%s" % (n, path))
 
     # ---------- Purchases ----------
-    def build_purchases(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="🧾 المشتريات والموردين")
+    def build_purchases(self, tab=None):
+        if tab is None:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="🧾 المشتريات والموردين")
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="المورد:").pack(side="left")
@@ -2176,6 +2249,8 @@ class App:
         self.pur_search_refresh()
 
     def pur_search_refresh(self):
+        if not hasattr(self, "list_pur"):
+            return  # v6.14
         q = self.e_pur_search.get() if hasattr(self, "e_pur_search") else ""
         self.pur_results = self.db.search_drugs(q, limit=40)
         self.fill_drug_search_tree(self.list_pur, self.pur_results)
@@ -2513,9 +2588,10 @@ class App:
                    style="Accent.TButton").pack(pady=12)
 
     # ---------- Customers ----------
-    def build_customers(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="👥 العملاء")
+    def build_customers(self, tab=None):
+        if tab is None:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="👥 العملاء")
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="بحث:").pack(side="left")
@@ -2534,6 +2610,8 @@ class App:
         self.cust_refresh()
 
     def cust_refresh(self):
+        if not hasattr(self, "tree_cust"):
+            return  # v6.14
         q = self.e_cust_search.get() if hasattr(self, "e_cust_search") else ""
         for i in self.tree_cust.get_children():
             self.tree_cust.delete(i)
@@ -2605,9 +2683,10 @@ class App:
         txt.config(state="disabled")
 
     # ---------- Reports ----------
-    def build_reports(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="📊 التقارير")
+    def build_reports(self, tab=None):
+        if tab is None:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="📊 التقارير")
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=6)
         ttk.Label(top, text="التاريخ (YYYY-MM-DD):").pack(side="left")
@@ -2644,6 +2723,8 @@ class App:
         self.reports_refresh()
 
     def reports_refresh(self):
+        if not hasattr(self, "tree_best"):
+            return  # v6.14
         day = self.e_rep_date.get().strip() or date.today().isoformat()
         try:
             r = self.db.report_daily(day)
@@ -3314,9 +3395,10 @@ class App:
         txt.config(state="disabled")
 
     # ---------- Cash / Shifts ----------
-    def build_cash(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="💰 الخزنة والورديات")
+    def build_cash(self, tab=None):
+        if tab is None:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="💰 الخزنة والورديات")
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=8)
         self.lbl_shift = ttk.Label(top, text="", font=("Segoe UI", 12, "bold"))
@@ -3354,6 +3436,8 @@ class App:
         self.cash_refresh()
 
     def cash_refresh(self):
+        if not hasattr(self, "lbl_shift"):
+            return  # v6.14
         if self.current_shift:
             self.lbl_shift.config(text="الوردية الحالية: #%d — فتحت %s — رصيد أول المدة %s" % (
                 self.current_shift["id"], self.current_shift["opened_at"],
@@ -3447,10 +3531,10 @@ class App:
         self.reports_refresh()
 
     # ---------- v2: AI forecasting ----------
-    def build_ai(self):
+    def build_ai(self, outer=None):
         # v5.0: scrollable tab (was cut off at 1280x800 — expiry table
         # and chart were invisible below the fold).
-        tab = self._scrollable_tab("🤖 التنبؤ الذكي")
+        tab = self._scrollable_tab("🤖 التنبؤ الذكي", outer)
         self.ai_reorder = []
         self.ai_expiry = []
         self.ai_forecasts = {}
@@ -3729,9 +3813,10 @@ class App:
                           "urgency", "confidence_pct"], rows)
 
     # ---------- v4: Mobile companion + print queue ----------
-    def build_mobile(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="📱 الموبايل والطباعة")
+    def build_mobile(self, tab=None):
+        if tab is None:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="📱 الموبايل والطباعة")
         self.mobile_tab = tab
         # ---------- v4.4: SCROLLABLE Mobile tab (root cause of "no QR") --
         # Before v4.4 every section was packed directly on `tab` (a plain
@@ -4978,10 +5063,10 @@ class App:
         txt.config(state="disabled")
 
     # ---------- Settings ----------
-    def build_settings(self):
+    def build_settings(self, outer=None):
         # v5.0: scrollable tab (backup/import/audit were invisible at
         # 1280x800 — content is ~1225px, the tab is 652px).
-        tab = self._scrollable_tab("⚙️ الإعدادات")
+        tab = self._scrollable_tab("⚙️ الإعدادات", outer)
         f = ttk.Frame(tab)
         f.pack(fill="both", expand=True, padx=14, pady=12)
         ttk.Label(f, text="إعدادات النظام", style="Header.TLabel").pack(anchor="w", pady=6)
@@ -5592,6 +5677,8 @@ class App:
         """v6.13: السجل بفلاتر (بحث حر / نوع الإجراء / المستخدم).
         الحجم مضبوط: لا يُحتفظ إلا بأحدث 5,000 حدث (تنظيف تلقائي عند
         كل تشغيل) فلا يكبر حتى بعد سنوات."""
+        if not hasattr(self, "txt_audit"):
+            return  # v6.14: الإعدادات لم تُبن بعد
         try:
             actions = self.db.audit_actions()
             cur_a = self.cb_audit_action.get()
@@ -5699,18 +5786,28 @@ def main():
         # Toplevel on it that never mapped — that was the bug that left
         # the app hidden with nothing on screen. Do not re-add it.
         # v5.0: automatic daily backup on startup (silent, best effort).
-        try:
-            folder = os.path.join(BASE, "backups")
-            newest = 0.0
-            if os.path.isdir(folder):
-                for f in os.listdir(folder):
-                    if f.startswith("pharmacy_") and f.endswith(".db"):
-                        newest = max(newest, os.path.getmtime(os.path.join(folder, f)))
-            import time as _time
-            if newest == 0.0 or _time.time() - newest > 24 * 3600:
-                db.backup()
-        except Exception:
-            pass
+        # v6.14: moved OFF the opening path — copying a large DB file
+        # used to sit between login and the first paint. It now runs in
+        # a daemon thread with its own DB connection (SQLite connections
+        # are never shared across threads here).
+        def _startup_backup_async():
+            try:
+                folder = os.path.join(BASE, "backups")
+                newest = 0.0
+                if os.path.isdir(folder):
+                    for f in os.listdir(folder):
+                        if f.startswith("pharmacy_") and f.endswith(".db"):
+                            newest = max(newest, os.path.getmtime(os.path.join(folder, f)))
+                import time as _time
+                if newest == 0.0 or _time.time() - newest > 24 * 3600:
+                    bdb = DB(path=db.path, init=False)
+                    try:
+                        bdb.backup()
+                    finally:
+                        bdb.close()
+            except Exception:
+                pass
+        threading.Thread(target=_startup_backup_async, daemon=True).start()
         # v5.10 (audit step 3): prune old receipt/label files (>30 days)
         # from receipts/ on startup (also pruned on every print).
         try:
