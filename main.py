@@ -245,7 +245,8 @@ class LoginWindow:
         self.notice = notice
         self.root = tk.Tk()
         self.root.title("تسجيل الدخول — Pharmacy Enterprise")
-        self.root.geometry("430x400")
+        # v6.20: open centred on the screen like a Win11 app.
+        ui_theme.center_window(self.root, 430, 400)
         self.root.resizable(False, False)
         _style = ttk.Style()
         _lpal = ui_theme.apply_theme(
@@ -261,7 +262,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.19", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.20", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -495,14 +496,12 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.19 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.20 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
-        root.geometry("1280x800")
-        root.minsize(1100, 650)
-        try:
-            root.state("zoomed")
-        except Exception:
-            pass
+        # v6.20: screen-aware default size + sensible minimum + the
+        # window reopens with the size, position and maximized state it
+        # was closed with (saved in settings, restored defensively).
+        ui_theme.setup_main_window(root, db)
         style = ttk.Style()
         self.pal = ui_theme.apply_theme(root, style, self.theme_name, self.ui_accent, self.ui_font_delta)
         ui_dialogs.set_theme(self.theme_name, self.ui_accent)
@@ -541,7 +540,9 @@ class App:
         self.purchase_lines = []
         self.current_shift = self.db.open_shift_for(self.username)
         self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill="both", expand=True, padx=6, pady=6)
+        # v6.20: Fluent margins — content breathes instead of touching
+        # the window edges.
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=8)
         self.mobile_server = None
         # v6.14: lazy tabs — only the dashboard builds at startup; every
         # other tab is a placeholder frame until first opened, so the
