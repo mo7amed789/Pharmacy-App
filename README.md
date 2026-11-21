@@ -3,7 +3,7 @@
 Offline-first pharmacy management app for Windows, Arabic-first UI, in Egyptian pounds (EGP).
 Built with Python standard library only (Tkinter + SQLite) — no pip packages, no venv.
 
-**Version: v6.13**
+**Version: v6.14**
 
 ## Features
 
@@ -100,6 +100,21 @@ Quiet background jobs, on top of cloud sync:
 
 Files: `automation.py`, `DB.audit_query/audit_actions/audit_count` in
 `database.py`, Settings sections in `main.py`, `tests/test_automation.py`.
+
+## Startup speed — v6.14
+
+- **Lazy tabs**: only the dashboard builds at startup; the other nine
+  tabs build on first open (same order, indices and shortcuts). Their
+  data loads (inventory list, reports, cash, audit log) no longer sit
+  on the opening path at all.
+- **AI forecast off the UI thread**: the «طلبات حرجة» card computes in
+  the background (measured 1.28s on a 55,240-product catalog, now 0 on
+  the UI thread), cached for 10 minutes.
+- **Startup backup threaded**: the daily backup copy no longer sits
+  between login and first paint.
+
+Files: `main.py` (`_ensure_tab`, `_kick_dash_ai`, refresh guards),
+`tests/test_lazy_tabs.py`.
 
 ## Full Arabic guide
 
