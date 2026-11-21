@@ -94,3 +94,27 @@ Same columns as the drug catalog, with these source-specific choices:
 - Cosmetics: live scrape of 10 Egyptian online beauty stores, Nov 21,
   2026 (store list above; names EN/AR, brands, sizes, categories,
   prices, barcodes where published, stock status, product URLs).
+
+## Personal-care supplement (v6.27)
+
+`personal_care_cosmetics.csv` adds 77 source-checked listings to the existing
+catalog. It covers shampoo, oils, soap, oral care, deodorants, shaving,
+creams, gels, baby care and related items. `personal_care_sources.csv`
+records the listing sources and check date. These are not all products
+sold in Egypt. The existing catalogs already include many more products,
+including eye/nasal/oral drops in the drug catalog.
+
+- Import using Settings -> Import CSV, or pull the cloud catalog after its update.
+- Arabic search labels include the product type and, where supplied, a
+  transliterated brand. The original English product name stays visible.
+- Prices are observed retailer listing prices, not official medicine tariffs
+  or purchase costs. They can vary by branch, promotion and date. Review
+  selling prices before use. No manufacturer, barcode or purchase price is
+  invented. The company field contains the listed brand, not a verified
+  manufacturer.
+- Existing cloud rows are not overwritten by the supplement. Importing the
+  CSV locally uses the app's usual matching by trade name and size.
+- New products have no stock. Enter real quantities through purchase invoices.
+- Whole-piece forms such as oils, soap, deodorant and toothpaste can only
+  be sold as a whole pack, not a strip or pill. Tablet/capsule behavior stays
+  unchanged.

@@ -176,7 +176,12 @@ def allowed_units(drug):
     if re.search(
         r"cream|ointment|gel|paste|lotion|syrup|suspension|solution|"
         r"drops?|spray|shampoo|injection|ampoule|vial|كريم|مرهم|جل|"
-        r"معجون|لوشن|شراب|معلق|محلول|نقط|قطرة|بخاخ|شامبو|حقن|أمبول|فيال",
+        r"معجون|لوشن|شراب|معلق|محلول|نقط|قطرة|بخاخ|شامبو|حقن|أمبول|فيال|"
+        # personal-care single-piece forms (v6.26): sold whole, never by strip/pill
+        r"hair mask|serum|oil|soap|toothpaste|mouthwash|wash|deodorant|razor|foam|powder|"
+        r"wipes|diapers?|pads|cotton|jelly|sunscreen|conditioner|toothbrush|"
+        r"floss|shower|tissues|intimate|زيت|صابون|بلسم|مزيل|شفرات|رغوة|"
+        r"بودرة|مناديل|حفاض|فوط|قطن|فازلين|واقي|فرشاة|شاور",
         form,
     ):
         return ["box"]
