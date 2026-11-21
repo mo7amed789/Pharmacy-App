@@ -97,8 +97,8 @@ class TestScreenAwareSizes(unittest.TestCase):
         self.assertIn("return False", seg)
 
     def test_version_bumped(self):
-        self.assertIn("Pharmacy Enterprise v6.23", self.main_src)
-        self.assertIn("نظام إدارة الصيدلية — v6.23", self.main_src)
+        self.assertIn("Pharmacy Enterprise v6.25", self.main_src)
+        self.assertIn("نظام إدارة الصيدلية — v6.25", self.main_src)
 
 
 if __name__ == "__main__":

@@ -118,8 +118,8 @@ class TestEveryDialogCovered(unittest.TestCase):
         self.assertEqual(uncovered, [])
 
     def test_version_bumped(self):
-        self.assertIn("Pharmacy Enterprise v6.23", self.src)
-        self.assertIn("نظام إدارة الصيدلية — v6.23", self.src)
+        self.assertIn("Pharmacy Enterprise v6.25", self.src)
+        self.assertIn("نظام إدارة الصيدلية — v6.25", self.src)
 
 
 if __name__ == "__main__":
