@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Pharmacy Enterprise v6.15 — UI theme module (stdlib only: Tkinter/ttk).
+Pharmacy Enterprise v6.18 — UI theme module (stdlib only: Tkinter/ttk).
 
 One place for the whole look: colours, fonts, card/banner helpers and
 Treeview striping.  Business logic, database and forecasting are NOT
@@ -10,6 +10,12 @@ v6.15 «futuristic» refresh: a deeper night-drive dark palette (the new
 default), a cleaner modern light palette, cyan/violet accent family,
 flatter buttons, roomier tabs and table rows, themed scrollbars, and
 themed tk Text/Listbox defaults so every surface matches the palette.
+
+v6.18 polish: a single button hierarchy (primary/success/danger/warning/
+secondary) with hover and pressed states on every variant, one status
+colour language (success/warning/danger/info/muted) with a pill label
+helper and Treeview status tags, and helpers so no screen hardcodes its
+own hex colours anymore.
 
 Windows fonts first (Segoe UI), with Tahoma / DejaVu Sans as fallbacks
 so the same file also renders on Linux during smoke tests.
@@ -95,6 +101,109 @@ DARK = {
 }
 
 PALETTES = {"light": LIGHT, "dark": DARK}
+
+
+def _shade(hex_color, factor):
+    """Lighten (factor > 1) or darken (0 < factor < 1) a #RRGGBB colour."""
+    try:
+        h = str(hex_color).lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        if factor >= 1:
+            f = min(factor - 1.0, 1.0)
+            r = int(r + (255 - r) * f)
+            g = int(g + (255 - g) * f)
+            b = int(b + (255 - b) * f)
+        else:
+            r = int(r * factor)
+            g = int(g * factor)
+            b = int(b * factor)
+        return "#%02X%02X%02X" % (max(0, min(255, r)),
+                                  max(0, min(255, g)),
+                                  max(0, min(255, b)))
+    except Exception:
+        return hex_color
+
+
+# ---------------------------------------------------------------- status language
+# v6.18: one coherent colour language for every state the app shows —
+# success (paid/synced/done), warning (due soon/partial), danger (failed/
+# void/critical), info (running/pending), muted (held/disabled).
+STATUS_KINDS = ("success", "warning", "danger", "info", "muted")
+
+# Arabic/domain status word → kind.  status_kind_for() matches the first
+# word found inside any status text, so every screen paints the same
+# state in the same colour.
+STATUS_WORDS = {
+    # invoices / payments
+    "مدفوعة": "success", "مدفوع": "success", "نقدي": "success",
+    "آجلة": "warning", "آجل": "warning", "جزئي": "warning",
+    "متأخرة": "danger", "مُرجعة": "danger", "مرتجع": "danger",
+    "ملغاة": "danger", "ملغية": "danger",
+    # sync / background tasks  (negative phrases first — they contain
+    # the positive words as substrings, and the first match wins)
+    "غير مفعّلة": "warning", "غير متاحة": "danger",
+    "متزامنة": "success", "ناجحة": "success",
+    "يعمل": "success", "مفعّلة": "success",
+    "فشلت": "danger", "فشل": "danger", "خطأ": "danger",
+    "متوقف": "danger",
+    "قيد التنفيذ": "info", "معلّقة": "info", "جارٍ": "info",
+    # stock / forecast urgency
+    "حرجة": "danger", "حرج": "danger", "ناقصة": "warning",
+    "عالية": "warning", "قريبة": "warning", "مستقرة": "success",
+    # held / disabled lines
+    "محذوف مؤقتاً": "muted", "معلَّق": "muted",
+}
+
+
+def status_colors(kind, theme_name="light", accent="teal"):
+    """(foreground, background) pair for a status kind."""
+    p = palette(theme_name, accent)
+    table = {
+        "success": (p["success"], p["success_bg"]),
+        "warning": (p["warning"], p["warning_bg"]),
+        "danger": (p["danger"], p["danger_bg"]),
+        "info": (p["info"], p["info_bg"]),
+        "muted": (p["muted"], p["row_alt"]),
+    }
+    return table.get(str(kind or "info"), table["info"])
+
+
+def status_kind_for(text):
+    """Best status kind for an Arabic status text (info when unknown)."""
+    t = str(text or "")
+    for word, kind in STATUS_WORDS.items():
+        if word in t:
+            return kind
+    return "info"
+
+
+# ---------------------------------------------------------------- buttons
+# v6.18 hierarchy, one meaning per colour everywhere:
+#   primary/Accent  → الخطوة الرئيسية (دخول، اعتماد، تشغيل)
+#   success         → تأكيد وحفظ وإتمام (حفظ، إتمام البيع)
+#   danger          → تدميري (حذف، إلغاء فاتورة)
+#   warning         → حذر (مسح، إيقاف)
+#   secondary       → كل الأزرار المحايدة
+BUTTON_KINDS = {
+    "primary": "Accent.TButton", "accent": "Accent.TButton",
+    "success": "Success.TButton",
+    "danger": "Danger.TButton",
+    "warning": "Warning.TButton",
+    "info": "Info.TButton",
+    "secondary": "TButton", "neutral": "TButton",
+}
+
+
+def button_style_for(kind):
+    """ttk style name for a semantic button kind."""
+    return BUTTON_KINDS.get(str(kind or "secondary"), "TButton")
+
+
+def styled_button(parent, text, command, kind="secondary"):
+    """A ttk.Button in the v6.18 hierarchy. kind: primary/success/danger/
+    warning/info/secondary."""
+    return ttk.Button(parent, text=text, command=command,
+                      style=button_style_for(kind))
 
 
 def palette(theme_name, accent="teal"):
@@ -193,23 +302,33 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
                     foreground=p["info"], font=font(12, bold=True))
     style.configure("Card.TRadiobutton", background=p["card_bg"],
                     foreground=p["text"], font=font(11))
-    style.configure("TButton", padding=(14, 10), font=font(11, bold=True),
+    # v6.18 button hierarchy: one meaning per colour, and every variant
+    # has visible hover (lighter) and pressed (darker) states.
+    style.configure("TButton", padding=(14, 9), font=font(11, bold=True),
                     background=p["card_bg"], foreground=p["text"],
                     bordercolor=p["border"], lightcolor=p["card_bg"],
                     darkcolor=p["card_bg"], focusthickness=0)
     style.map("TButton",
-              background=[("active", p["row_alt"]), ("pressed", p["border"])],
-              foreground=[("disabled", p["muted"])])
-    style.configure("Accent.TButton", background=p["accent"],
-                    foreground="#FFFFFF", font=font(12, bold=True),
-                    bordercolor=p["accent"], lightcolor=p["accent"],
-                    darkcolor=p["accent"], padding=(16, 10))
-    style.map("Accent.TButton",
-              background=[("active", p["accent_hover"]), ("pressed", p["header_bg2"])])
-    style.configure("Success.TButton", background=p["success"],
-                    foreground="#FFFFFF", font=font(12, bold=True))
-    style.configure("Danger.TButton", background=p["danger"],
-                    foreground="#FFFFFF", font=font(11, bold=True))
+              background=[("pressed", p["border"]), ("active", p["row_alt"])],
+              foreground=[("disabled", p["muted"])],
+              bordercolor=[("focus", p["accent"]), ("active", p["accent"])])
+
+    def _solid_button(name, base, size=11, pad=(16, 10)):
+        """One solid-colour button style with hover/pressed shades."""
+        style.configure(name, background=base, foreground="#FFFFFF",
+                        font=font(size, bold=True), padding=pad,
+                        bordercolor=base, lightcolor=base, darkcolor=base,
+                        focusthickness=0)
+        style.map(name,
+                  background=[("pressed", _shade(base, 0.72)),
+                              ("active", _shade(base, 1.18))],
+                  foreground=[("disabled", p["muted"])])
+
+    _solid_button("Accent.TButton", p["accent"], size=12)
+    _solid_button("Success.TButton", p["success"], size=12)
+    _solid_button("Danger.TButton", p["danger"])
+    _solid_button("Warning.TButton", p["warning"])
+    _solid_button("Info.TButton", p["info"])
     style.configure("Big.TButton", padding=(18, 13), font=font(14, bold=True))
     style.configure("TEntry", font=font(12), fieldbackground=p["input_bg"],
                     foreground=p["text"], insertcolor=p["text"],
@@ -283,7 +402,12 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
 
 
 def style_treeview(tree, theme_name="light"):
-    """Striping + status tags for one Treeview. Call after each refresh."""
+    """Striping + status tags for one Treeview. Call after each refresh.
+
+    v6.18 status tags (same language as status_colors): paid/synced/ok
+    are success, due/warn/high are warning, failed/voided/crit are
+    danger, held is muted grey.
+    """
     p = palette(theme_name)
     try:
         tree.tag_configure("even", background=p["row_bg"],
@@ -302,8 +426,23 @@ def style_treeview(tree, theme_name="light"):
                            font=font(11, bold=True))
         tree.tag_configure("warn_text", foreground=p["warning"],
                            font=font(11, bold=True))
+        # v6.18: held (محذوف مؤقتاً) and named status rows.
+        tree.tag_configure("held", foreground=p["muted"])
+        tree.tag_configure("paid", background=p["success_bg"],
+                           foreground=p["success"])
+        tree.tag_configure("due", background=p["warning_bg"],
+                           foreground=p["warning"])
+        tree.tag_configure("failed", background=p["danger_bg"],
+                           foreground=p["danger"], font=font(11, bold=True))
+        tree.tag_configure("synced", background=p["info_bg"],
+                           foreground=p["info"])
     except Exception:
         pass
+
+
+# Tags stripe_rows must never overwrite with even/odd striping.
+STATUS_TAGS = ("crit", "high", "ok", "warn", "danger_text", "warn_text",
+               "held", "paid", "due", "failed", "synced")
 
 
 def stripe_rows(tree, theme_name="light"):
@@ -312,8 +451,7 @@ def stripe_rows(tree, theme_name="light"):
     try:
         for idx, iid in enumerate(tree.get_children()):
             tags = [t for t in tree.item(iid, "tags")
-                    if t in ("crit", "high", "ok", "warn",
-                             "danger_text", "warn_text")]
+                    if t in STATUS_TAGS]
             if not tags:
                 tags = ["even" if idx % 2 == 0 else "odd"]
             tree.item(iid, tags=tuple(tags))
@@ -400,3 +538,23 @@ def section_title(parent, text, theme_name="light"):
 def big_button(parent, text, command, style_name="Accent.TButton"):
     return ttk.Button(parent, text=text, command=command,
                       style=style_name)
+
+
+# ---------------------------------------------------------------- status pill
+def status_label(parent, text="", kind="info", theme_name="light"):
+    """A small pill label in the v6.18 status colour language."""
+    fg, bg = status_colors(kind, theme_name)
+    return tk.Label(parent, text=text, bg=bg, fg=fg,
+                    font=font(10, bold=True), padx=10, pady=3,
+                    anchor="center", justify="center")
+
+
+def set_status(lbl, text, kind=None, theme_name="light"):
+    """Update a pill/status label; kind auto-detected from the text."""
+    if kind is None:
+        kind = status_kind_for(text)
+    fg, bg = status_colors(kind, theme_name)
+    try:
+        lbl.configure(text=text, bg=bg, fg=fg)
+    except Exception:
+        pass

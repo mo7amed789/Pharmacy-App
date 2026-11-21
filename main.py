@@ -109,7 +109,9 @@ import urllib.request
 import urllib.error
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, filedialog, simpledialog
+# v6.18: themed message dialogs — same messagebox API, app look.
+import ui_dialogs as messagebox
 from datetime import date, datetime
 
 from database import (DB, allowed_units, unit_price, units_for_qty,
@@ -248,6 +250,8 @@ class LoginWindow:
         _lpal = ui_theme.apply_theme(
             self.root, _style, ui_theme.get_theme_name(db),
             db.get_setting("ui_accent", "teal"))
+        ui_dialogs.set_theme(ui_theme.get_theme_name(db),
+                             db.get_setting("ui_accent", "teal"))
         ttk.Label(self.root, text="💊 Pharmacy Enterprise", font=("Segoe UI", 22, "bold")).pack(pady=(16, 2))
         try:
             _pn = db.conn.execute("SELECT value FROM settings WHERE key='pharmacy_name'").fetchone()
@@ -256,7 +260,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.17", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.18", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -273,7 +277,7 @@ class LoginWindow:
         # v5.1: notice line (e.g. after cancelling the forced password
         # change) — shown in red so a return to the login screen is
         # never mistaken for a silent failure.
-        self.lbl_notice = tk.Label(self.root, text=self.notice, fg="#b00020",
+        self.lbl_notice = tk.Label(self.root, text=self.notice, fg=_lpal["danger"],
                                    font=("Segoe UI", 10, "bold"), wraplength=360,
                                    justify="center")
         if self.notice:
@@ -490,7 +494,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.17 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.18 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         root.geometry("1280x800")
         root.minsize(1100, 650)
@@ -500,6 +504,7 @@ class App:
             pass
         style = ttk.Style()
         self.pal = ui_theme.apply_theme(root, style, self.theme_name, self.ui_accent, self.ui_font_delta)
+        ui_dialogs.set_theme(self.theme_name, self.ui_accent)
         # ----- top bar (every screen) -----
         self.topbar = tk.Frame(root, bg=self.pal["header_bg"], height=52)
         self.topbar.pack(fill="x")
@@ -758,6 +763,7 @@ class App:
             self.db.set_setting("ui_font_size", self.ui_font_size)
         ui_theme.set_theme_name(self.db, theme_name)
         self.pal = ui_theme.apply_theme(self.root, ttk.Style(), theme_name, self.ui_accent, self.ui_font_delta)
+        ui_dialogs.set_theme(theme_name, self.ui_accent)
         try:
             self.topbar.configure(bg=self.pal["header_bg"])
             for w in (self.lbl_top_pharmacy, self.lbl_top_user, self.lbl_top_shift):
@@ -897,10 +903,10 @@ class App:
         # cards row 1 + row 2
         self.dash_cards = {}
         for row_no, defs in enumerate([
-            [("sales", "مبيعات اليوم", "#0F766E"), ("profit", "صافي ربح اليوم", "#15803D"),
-             ("cash", "نقدي اليوم", "#1D4ED8"), ("invoices", "فواتير اليوم", "#6D28D9")],
-            [("low", "أصناف ناقصة", "#B45309"), ("expiry", "تشغيلات قريبة الانتهاء (30 يوم)", "#B91C1C"),
-             ("critical", "طلبات حرجة (التنبؤ)", "#B91C1C"), ("inv_value", "قيمة المخزون (سعر البيع)", "#0F766E")],
+            [("sales", "مبيعات اليوم", self.pal["accent"]), ("profit", "صافي ربح اليوم", self.pal["success"]),
+             ("cash", "نقدي اليوم", self.pal["info"]), ("invoices", "فواتير اليوم", self.pal["muted"])],
+            [("low", "أصناف ناقصة", self.pal["warning"]), ("expiry", "تشغيلات قريبة الانتهاء (30 يوم)", self.pal["danger"]),
+             ("critical", "طلبات حرجة (التنبؤ)", self.pal["danger"]), ("inv_value", "قيمة المخزون (سعر البيع)", self.pal["accent"])],
         ]):
             rowf = ttk.Frame(tab)
             rowf.pack(fill="x", padx=10, pady=4)
@@ -1318,14 +1324,16 @@ class App:
                                             "stock": "المخزون"}[c])
             self.tree_cart.column(c, width=w)
         self.tree_cart.pack(fill="both", expand=True)
-        self.tree_cart.tag_configure("held", foreground="#9CA3AF")
         ui_theme.style_treeview(self.tree_cart, self.theme_name)
         btns = ttk.Frame(right)
         btns.pack(fill="x", pady=6)
         ttk.Button(btns, text="💸 خصم السطر", command=self.pos_line_discount_dialog).pack(side="left", padx=2)
-        ttk.Button(btns, text="🗑 حذف السطر المحدد", command=self.pos_remove_line).pack(side="left", padx=2)
-        ttk.Button(btns, text="↩ استرجاع السطر المحذوف", command=self.pos_restore_line).pack(side="left", padx=2)
-        ttk.Button(btns, text="مسح الفاتورة", command=self.pos_clear_cart).pack(side="left", padx=2)
+        ttk.Button(btns, text="🗑 حذف السطر المحدد", command=self.pos_remove_line,
+                   style="Danger.TButton").pack(side="left", padx=2)
+        ttk.Button(btns, text="↩ استرجاع السطر المحذوف", command=self.pos_restore_line,
+                   style="Success.TButton").pack(side="left", padx=2)
+        ttk.Button(btns, text="مسح الفاتورة", command=self.pos_clear_cart,
+                   style="Warning.TButton").pack(side="left", padx=2)
         ttk.Button(btns, text="⏸ تعليق الفاتورة (Hold)", command=self.pos_hold).pack(side="left", padx=2)
         ttk.Button(btns, text="↩ استدعاء فاتورة معلقة", command=self.pos_recall).pack(side="left", padx=2)
 
@@ -2071,7 +2079,7 @@ class App:
             else:
                 messagebox.showinfo("تم", "تم الحفظ بنجاح")
         fields["barcode"].bind("<Return>", lambda e: save())
-        ttk.Button(win, text="💾 حفظ", command=save).pack(pady=14)
+        ttk.Button(win, text="💾 حفظ", command=save, style="Success.TButton").pack(pady=14)
 
     def drug_edit_selected(self):
         d = self._selected_inv_drug()
@@ -2243,9 +2251,11 @@ class App:
             _pur_btns, text="✏️ تعديل السطر المحدد", command=self.pur_edit_line)
         self.btn_pur_edit_line.pack(side="left", padx=2)
         self.btn_pur_delete_line = ttk.Button(
-            _pur_btns, text="🗑 حذف السطر المحدد", command=self.pur_delete_line)
+            _pur_btns, text="🗑 حذف السطر المحدد", command=self.pur_delete_line,
+            style="Danger.TButton")
         self.btn_pur_delete_line.pack(side="left", padx=2)
-        ttk.Button(mid, text="💾 حفظ فاتورة الشراء وتحديث المخزون", command=self.pur_save).pack(pady=8)
+        ttk.Button(mid, text="💾 حفظ فاتورة الشراء وتحديث المخزون", command=self.pur_save,
+                   style="Success.TButton").pack(pady=8)
         self.lbl_pur_total = ttk.Label(mid, text="إجمالي فاتورة الشراء: 0.00 ج.م", style="Total.TLabel")
         self.lbl_pur_total.pack()
         self.pur_search_refresh()
@@ -2651,7 +2661,7 @@ class App:
             self.cust_refresh()
             self.cb_customer["values"] = ["عميل نقدي"] + [c["name"] for c in self.db.customers()]
             messagebox.showinfo("تم", "تمت إضافة العميل")
-        ttk.Button(win, text="حفظ", command=save).pack(pady=14)
+        ttk.Button(win, text="حفظ", command=save, style="Success.TButton").pack(pady=14)
 
     def customer_pay_dialog(self):
         c = self._selected_customer()
@@ -2698,14 +2708,15 @@ class App:
         ttk.Button(top, text="عرض تقرير اليوم", command=self.reports_refresh).pack(side="left", padx=4)
         ttk.Button(top, text="📋 كل الفواتير", command=self.show_all_invoices,
                    style="Accent.TButton").pack(side="left", padx=4)
-        ttk.Button(top, text="إرجاع فاتورة (مرتجع)", command=self.return_sale_dialog).pack(side="left", padx=4)
+        ttk.Button(top, text="إرجاع فاتورة (مرتجع)", command=self.return_sale_dialog,
+                   style="Danger.TButton").pack(side="left", padx=4)
         self.lbl_rep = ttk.Label(tab, text="", font=("Segoe UI", 12), wraplength=1000, justify="left")
         self.lbl_rep.pack(anchor="w", padx=10, pady=6)
         self.rep_cards_frame = ttk.Frame(tab)
         self.rep_cards_frame.pack(fill="x", padx=10, pady=4)
         self.rep_cards = {}
-        for _key, _title, _acc in [("total", "مبيعات اليوم", "#0F766E"), ("profit", "ربح اليوم", "#15803D"),
-                                   ("count", "عدد الفواتير", "#6D28D9"), ("net", "صافي الربح", "#1D4ED8")]:
+        for _key, _title, _acc in [("total", "مبيعات اليوم", self.pal["accent"]), ("profit", "ربح اليوم", self.pal["success"]),
+                                   ("count", "عدد الفواتير", self.pal["info"]), ("net", "صافي الربح", self.pal["success"])]:
             _fr, _val, _sub = ui_theme.make_card(self.rep_cards_frame, _title, "—", "", _acc, self.theme_name)
             _fr.pack(side="left", fill="both", expand=True, padx=4)
             self.rep_cards[_key] = (_fr, _val, _sub)
@@ -2924,7 +2935,7 @@ class App:
         if s.get("edited_at"):
             ttk.Label(win, text="✏️ عُدّلت: %s بواسطة %s" % (
                 s["edited_at"], s.get("edited_by") or "—"),
-                font=("Segoe UI", 11, "bold"), foreground="#B45309").pack(
+                font=("Segoe UI", 11, "bold"), foreground=self.pal["warning"]).pack(
                     anchor="w", padx=12, pady=2)
         btns = ttk.Frame(win)
         btns.pack(fill="x", padx=10, pady=8)
@@ -3012,18 +3023,17 @@ class App:
             font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=8)
         if sale.get("printed_at"):
             ttk.Label(win, text="⚠️ هذه الفاتورة مطبوعة — بعد التعديل ستُطبع من جديد بالمحتوى الجديد.",
-                      font=("Segoe UI", 11), foreground="#B45309").pack(anchor="w", padx=12)
+                      font=("Segoe UI", 11), foreground=self.pal["warning"]).pack(anchor="w", padx=12)
         if sale.get("edited_at"):
             ttk.Label(win, text="✏️ عُدّلت من قبل: %s بواسطة %s" % (
                 sale["edited_at"], sale.get("edited_by") or "—"),
-                font=("Segoe UI", 11), foreground="#B45309").pack(anchor="w", padx=12)
+                font=("Segoe UI", 11), foreground=self.pal["warning"]).pack(anchor="w", padx=12)
         cols = ("drug", "unit", "qty", "price", "disc", "total")
         tree = ttk.Treeview(win, columns=cols, show="headings", height=10)
         for c, t in zip(cols, ("الدواء", "الوحدة", "الكمية", "السعر", "الخصم", "الإجمالي")):
             tree.heading(c, text=t)
             tree.column(c, width=130)
         tree.pack(fill="both", expand=True, padx=10, pady=4)
-        tree.tag_configure("held", foreground="#9CA3AF")
         ui_theme.style_treeview(tree, self.theme_name)
 
         def refresh_tree():
@@ -3426,7 +3436,8 @@ class App:
         ttk.Label(row, text="ملاحظات:").pack(side="left")
         self.e_exp_notes = ttk.Entry(row, width=26)
         self.e_exp_notes.pack(side="left", padx=4)
-        ttk.Button(row, text="حفظ المصروف", command=self.add_expense).pack(side="left", padx=6)
+        ttk.Button(row, text="حفظ المصروف", command=self.add_expense,
+                   style="Success.TButton").pack(side="left", padx=6)
         ttk.Label(mid, text="مصروفات اليوم:", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(10, 2))
         cols = ("kind", "amount", "notes", "user")
         self.tree_exp = ttk.Treeview(mid, columns=cols, show="headings", height=12)
@@ -3543,7 +3554,7 @@ class App:
         self.ai_selected_drug = None
         if ai_forecast is None:
             ttk.Label(tab, text="⚠️ ملف ai_forecast.py غير موجود — انسخ ملفات التحديث v2 كاملة.",
-                      font=("Segoe UI", 12, "bold"), foreground="red").pack(pady=20)
+                      font=("Segoe UI", 12, "bold"), foreground=self.pal["danger"]).pack(pady=20)
             return
         # Top controls
         top = ttk.Frame(tab)
@@ -3572,9 +3583,9 @@ class App:
         self.ai_cards_frame = ttk.Frame(tab)
         self.ai_cards_frame.pack(fill="x", padx=10, pady=4)
         self.ai_cards = {}
-        for _key, _title, _acc in [("critical", "حرجة تحتاج طلب", "#B91C1C"),
-                                   ("high", "عالية الأولوية", "#B45309"),
-                                   ("loss", "خسارة صلاحية متوقعة", "#B91C1C")]:
+        for _key, _title, _acc in [("critical", "حرجة تحتاج طلب", self.pal["danger"]),
+                                   ("high", "عالية الأولوية", self.pal["warning"]),
+                                   ("loss", "خسارة صلاحية متوقعة", self.pal["danger"])]:
             _fr, _val, _sub = ui_theme.make_card(self.ai_cards_frame, _title, "—", "", _acc, self.theme_name)
             _fr.pack(side="left", fill="both", expand=True, padx=4)
             self.ai_cards[_key] = (_fr, _val, _sub)
@@ -3880,7 +3891,7 @@ class App:
                   style="Header.TLabel").pack(anchor="w", padx=12, pady=(10, 2))
         # v4.4 hint: there is more below the fold (QR, diagnostics, invoices).
         ttk.Label(tab, text="⬇️ انزل لتحت لرؤية QR والفواتير",
-                  font=("Segoe UI", 11, "bold"), foreground="#0F766E").pack(
+                  font=("Segoe UI", 11, "bold"), foreground=self.pal["accent"]).pack(
                       anchor="w", padx=12, pady=(0, 2))
         ttk.Label(tab, text="نفس الواي فاي — شبكة محلية فقط.",
                   style="Muted.TLabel", wraplength=1100).pack(anchor="w", padx=12)
@@ -4004,7 +4015,7 @@ class App:
         qframe = ttk.Frame(tab)
         qframe.pack(fill="x", padx=12, pady=2)
         self.qr_canvas = tk.Canvas(qframe, width=260, height=260, bg="white",
-                                   highlightthickness=1, highlightbackground="#0F766E")
+                                   highlightthickness=1, highlightbackground=self.pal["accent"])
         self.qr_canvas.pack(side="left", padx=4)
         qctl = ttk.Frame(qframe)
         qctl.pack(side="left", fill="both", expand=True, padx=8)
@@ -4127,11 +4138,13 @@ class App:
         try:
             running = getattr(self, "mobile_server", None) is not None and self.mobile_server.running
             if running:
-                self.lbl_mobile_status.config(text="السيرفر: 🟢 يعمل")
+                self.lbl_mobile_status.config(text="السيرفر: 🟢 يعمل",
+                                              foreground=self.pal["success"])
                 self.lbl_mobile_url.config(text="الرابط: %s" % self.mobile_server.url)
                 self.btn_mobile_start.config(text="⏹ إيقاف السيرفر")
             else:
-                self.lbl_mobile_status.config(text="السيرفر: 🔴 متوقف")
+                self.lbl_mobile_status.config(text="السيرفر: 🔴 متوقف",
+                                              foreground=self.pal["danger"])
                 self.lbl_mobile_url.config(text="الرابط: —")
                 self.btn_mobile_start.config(text="▶️ تشغيل السيرفر")
             pin = self.mobile_pin()
@@ -4298,7 +4311,7 @@ class App:
                     self.qr_canvas.create_text(
                         w // 2, h // 2,
                         text="شغّل السيرفر أولاً\nلعرض رمز QR",
-                        font=("Segoe UI", 14, "bold"), fill="#B91C1C",
+                        font=("Segoe UI", 14, "bold"), fill=self.pal["danger"],
                         justify="center")
                     self._qr_drawn_url = None
                     self._qr_drawn_running = False
@@ -4819,14 +4832,16 @@ class App:
                 if state == "On":
                     self.lbl_hotspot_status.config(
                         text="هوت سبوت ويندوز: 🟢 يعمل — الشبكة: %s" % (
-                            ssid or "؟"))
+                            ssid or "؟"), foreground=self.pal["success"])
                 elif state == "Off":
                     self.lbl_hotspot_status.config(
-                        text="هوت سبوت ويندوز: 🔴 متوقف")
+                        text="هوت سبوت ويندوز: 🔴 متوقف",
+                        foreground=self.pal["danger"])
                 else:
                     self.lbl_hotspot_status.config(
                         text="هوت سبوت ويندوز: ❓ غير معروف — %s" % (
-                            st.get("error", "") or "اضغط «تشغيل» للتجربة."))
+                            st.get("error", "") or "اضغط «تشغيل» للتجربة."),
+                        foreground=self.pal["warning"])
                 if ssid:
                     self.lbl_hotspot_info.config(
                         text="الشبكة: %s — كلمة المرور: من إعدادات ويندوز "
@@ -5208,11 +5223,12 @@ class App:
         self.btn_cloud_push = ttk.Button(f, text="⬆️ رفع كل الأصناف المحلية للسحابة",
                                          command=self.cloud_push_all)
         self.btn_cloud_push.pack(anchor="w", pady=4)
-        self.lbl_cloud = ttk.Label(f, text=self._cloud_status_text(), style="Muted.TLabel",
+        self.lbl_cloud = ttk.Label(f, text="", style="Muted.TLabel",
                                    wraplength=700, justify="left")
         self.lbl_cloud.pack(anchor="w", pady=2)
         ttk.Button(f, text="🔄 تحديث حالة المزامنة",
-                   command=lambda: self.lbl_cloud.config(text=self._cloud_status_text())).pack(anchor="w", pady=2)
+                   command=self._cloud_refresh_label).pack(anchor="w", pady=2)
+        self._cloud_refresh_label()
         # ---------- v6.12: 🔄 تحديثات البرنامج ----------
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(f, text="🔄 تحديثات البرنامج:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -5372,7 +5388,7 @@ class App:
             self.db.audit(self.username, "add_user", ents["username"].get())
             win.destroy()
             messagebox.showinfo("تم", "تمت إضافة المستخدم")
-        ttk.Button(win, text="حفظ", command=save).pack(pady=12)
+        ttk.Button(win, text="حفظ", command=save, style="Success.TButton").pack(pady=12)
 
     def do_backup(self):
         try:
@@ -5470,6 +5486,23 @@ class App:
             parts.append("آخر خطأ: " + st["last_error"])
         return "\n".join(parts)
 
+    def _cloud_refresh_label(self):
+        """v6.18: sync status in the status colour language — green when
+        active, red on failure, amber when not configured yet."""
+        try:
+            txt = self._cloud_status_text()
+            if "آخر خطأ" in txt or "غير متاحة" in txt:
+                colour = self.pal["danger"]
+            elif "غير مفعّلة" in txt:
+                colour = self.pal["warning"]
+            elif "المزامنة مفعّلة" in txt:
+                colour = self.pal["success"]
+            else:
+                colour = self.pal["muted"]
+            self.lbl_cloud.config(text=txt, foreground=colour)
+        except Exception:
+            pass
+
     def cloud_pull(self):
         """سحب كل المنتجات من السحابة ودمجها محلياً (في خيط خلفي)."""
         import cloud_sync
@@ -5498,7 +5531,7 @@ class App:
         def done(result, error):
             def ui():
                 self.btn_cloud_pull.config(state="normal")
-                self.lbl_cloud.config(text=self._cloud_status_text())
+                self._cloud_refresh_label()
                 if error is not None:
                     messagebox.showerror("خطأ في المزامنة", str(error))
                     return
@@ -5538,7 +5571,7 @@ class App:
         def done(result, error):
             def ui():
                 self.btn_cloud_push.config(state="normal")
-                self.lbl_cloud.config(text=self._cloud_status_text())
+                self._cloud_refresh_label()
                 if error is not None:
                     messagebox.showerror("خطأ في المزامنة", str(error))
                     return
