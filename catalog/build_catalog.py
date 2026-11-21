@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Build a Pharmacy-Enterprise-import-ready drug catalog from the
-27,617-item Egyptian pharmacy database.
+public 27K+ Egyptian medicines dataset.
 
-Input : Egypt_Pharmacy_Database CSV (columns: id, trade_name_en,
-        trade_name_ar, active_ingredients, manufacturer, price_egp,
-        old_price_egp, barcode, category, route, units_in_pack, uses_ar)
+Usage:
+    py catalog/build_catalog.py
+        Downloads the latest dataset and writes
+        catalog/egyptian_drugs_catalog.csv next to this script.
+    py catalog/build_catalog.py SOURCE.csv [OUT.csv]
+        Convert a local copy of the dataset instead.
+
+Accepted input layouts (column aliases are handled automatically):
+- mahmoudfalous/eg-drugs data/eg_drugs.csv (downloaded by default)
+- the enriched Egypt_Pharmacy_Database CSV (trade_name_en, ...)
+
 Output: CSV with EXACTLY the columns Pharmacy Enterprise's
         Settings -> Import CSV expects (see drugs_template.csv /
         database.py import_drugs_csv):
@@ -24,7 +32,21 @@ Decisions (documented in catalog/README.md):
 - Only unique, digits-only barcodes (>= 8 digits) are kept; first
   occurrence wins, because the app rejects duplicate barcodes.
 """
-import csv, re, sys
+import csv, os, re, sys, urllib.request
+
+SOURCE_URL = ("https://raw.githubusercontent.com/mahmoudfalous/eg-drugs/"
+              "main/data/eg_drugs.csv")
+
+# Source column -> canonical field (both accepted layouts)
+ALIASES = {
+    "trade_en": ["trade_name_en", "name"],
+    "trade_ar": ["trade_name_ar", "arabic"],
+    "scientific": ["active_ingredients", "active"],
+    "company": ["manufacturer", "company"],
+    "sell_price": ["price_egp", "price"],
+    "barcode": ["barcode"],
+    "category": ["category", "description"],
+}
 
 STRENGTH_RE = re.compile(
     r"(\d+(?:\.\d+)?(?:\s*[+/]\s*\d+(?:\.\d+)?)*)\s*"
@@ -81,12 +103,21 @@ def clean_barcode(raw):
 
 def main(src, dst):
     with open(src, newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
+        raw_rows = list(csv.DictReader(f))
+    rows = []
+    for r in raw_rows:
+        row = {}
+        for canon, names in ALIASES.items():
+            for n in names:
+                if n in r and r[n] is not None:
+                    row[canon] = r[n]
+                    break
+        rows.append(row)
     out, seen_keys, seen_barcodes = [], set(), set()
     stats = {"rows_in": len(rows), "no_price": 0, "no_barcode": 0,
              "dup_barcode": 0, "key_collisions": 0, "no_strength": 0, "clamped_price": 0}
     for r in rows:
-        name = (r.get("trade_name_en") or "").strip()
+        name = (r.get("trade_en") or "").strip()
         if not name:
             continue
         form = parse_form(name)
@@ -101,11 +132,11 @@ def main(src, dst):
             strength = ("%s | %s" % (strength, form)).strip(" |")
             key = (name.lower(), strength.lower())
             if key in seen_keys:
-                strength = ("%s | %s" % (strength, (r.get("manufacturer") or "").strip())).strip(" |")
+                strength = ("%s | %s" % (strength, (r.get("company") or "").strip())).strip(" |")
                 key = (name.lower(), strength.lower())
         seen_keys.add(key)
         try:
-            sell = round(float(r.get("price_egp") or 0), 2)
+            sell = round(float(r.get("sell_price") or 0), 2)
         except ValueError:
             sell = 0.0
         if sell > 1e7:
@@ -124,11 +155,14 @@ def main(src, dst):
                 seen_barcodes.add(bc)
         else:
             stats["no_barcode"] += 1
+        cat = (r.get("category") or "").strip()
+        if cat in (".", "-", "?"):
+            cat = ""
         out.append({
             "trade_en": name,
-            "trade_ar": (r.get("trade_name_ar") or "").strip(),
-            "scientific": (r.get("active_ingredients") or "").strip(),
-            "company": (r.get("manufacturer") or "").strip(),
+            "trade_ar": (r.get("trade_ar") or "").strip(),
+            "scientific": (r.get("scientific") or "").strip(),
+            "company": (r.get("company") or "").strip(),
             "form": form,
             "strength": strength,
             "category": (r.get("category") or "").strip(),
@@ -151,4 +185,17 @@ def main(src, dst):
         print("%s: %s" % (k, v))
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    here = os.path.dirname(os.path.abspath(__file__))
+    if len(sys.argv) >= 2:
+        src_path = sys.argv[1]
+        dst_path = sys.argv[2] if len(sys.argv) >= 3 else os.path.join(
+            here, "egyptian_drugs_catalog.csv")
+    else:
+        src_path = os.path.join(here, "eg_drugs_source.csv")
+        dst_path = os.path.join(here, "egyptian_drugs_catalog.csv")
+        if not os.path.exists(src_path):
+            print("Downloading latest dataset ...")
+            urllib.request.urlretrieve(SOURCE_URL, src_path)
+            print("saved:", src_path)
+    main(src_path, dst_path)
+    print("wrote:", dst_path)
