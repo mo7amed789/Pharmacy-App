@@ -495,6 +495,71 @@ class _ReuseServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
+# ---------------------------------------------------------------------------
+# v6.23: desktop <-> phone scan-request mailbox (in-memory, per process).
+#
+# The desktop add-drug dialog can ask the phone page to scan a barcode with
+# its camera and send the result back. The phone polls GET /api/scan-request;
+# the desktop dialog polls scan_request_poll() directly (same process), so no
+# DB writes and no extra HTTP are involved on the PC side. One request at a
+# time; it expires after SCAN_REQUEST_TTL seconds.
+# ---------------------------------------------------------------------------
+SCAN_REQUEST_TTL = 180.0
+_SCAN_LOCK = threading.Lock()
+_SCAN_STATE = {"id": 0, "at": 0.0, "code": None}
+
+
+def scan_request_open():
+    """Desktop: open one pending barcode request; returns its id."""
+    with _SCAN_LOCK:
+        _SCAN_STATE["id"] += 1
+        _SCAN_STATE["at"] = time.time()
+        _SCAN_STATE["code"] = None
+        return _SCAN_STATE["id"]
+
+
+def scan_request_poll(rid):
+    """Desktop: poll a request id -> {"pending", "code", "expired"}."""
+    with _SCAN_LOCK:
+        if not rid or rid != _SCAN_STATE["id"] or _SCAN_STATE["at"] == 0.0:
+            return {"pending": False, "code": None, "expired": True}
+        if _SCAN_STATE["code"]:
+            return {"pending": False, "code": _SCAN_STATE["code"], "expired": False}
+        if time.time() - _SCAN_STATE["at"] > SCAN_REQUEST_TTL:
+            return {"pending": False, "code": None, "expired": True}
+        return {"pending": True, "code": None, "expired": False}
+
+
+def scan_request_cancel(rid):
+    """Desktop: give up on a request (dialog closed)."""
+    with _SCAN_LOCK:
+        if rid and rid == _SCAN_STATE["id"]:
+            _SCAN_STATE["at"] = 0.0
+            _SCAN_STATE["code"] = None
+
+
+def _scan_phone_view():
+    """Phone GET: is a scan request pending right now, and which id?"""
+    with _SCAN_LOCK:
+        pending = (_SCAN_STATE["at"] > 0.0 and not _SCAN_STATE["code"]
+                   and time.time() - _SCAN_STATE["at"] <= SCAN_REQUEST_TTL)
+        return {"pending": pending, "id": _SCAN_STATE["id"] if pending else 0}
+
+
+def _scan_phone_submit(rid, code):
+    """Phone POST: deliver one scanned barcode. True when accepted."""
+    code = (code or "").strip()
+    if not code or len(code) > 64:
+        return False
+    with _SCAN_LOCK:
+        if rid != _SCAN_STATE["id"] or _SCAN_STATE["at"] == 0.0:
+            return False
+        if time.time() - _SCAN_STATE["at"] > SCAN_REQUEST_TTL:
+            return False
+        _SCAN_STATE["code"] = code
+        return True
+
+
 class MobileServer:
     """Start/stop wrapper so the desktop app can run the server in a
     background daemon thread. Safe to call start() twice.
@@ -539,6 +604,17 @@ class MobileServer:
     @property
     def url_list(self):
         return mobile_urls(self.port)
+
+    # v6.23: the desktop scan dialog talks to the mailbox through the
+    # server object it already holds.
+    def scan_request_open(self):
+        return scan_request_open()
+
+    def scan_request_poll(self, rid):
+        return scan_request_poll(rid)
+
+    def scan_request_cancel(self, rid):
+        scan_request_cancel(rid)
 
     @property
     def https_url(self):
@@ -890,6 +966,14 @@ def _make_handler(db_path, req_log=None):
                     self._api_drugs(parsed)
                 elif path == "/api/live":
                     self._api_live(parsed)
+                elif path == "/api/scan-request":
+                    # v6.23: the phone asks if the PC wants a barcode scanned.
+                    self._api_scan_request()
+                elif path == "/api/drug":
+                    # v6.10: single-drug lookup by id (?id=123) — the
+                    # lightweight cart refresh for ONE drug, without
+                    # re-fetching the whole drug list.
+                    self._api_drug_by_id(parsed)
                 elif path.startswith("/api/drug/"):
                     self._api_drug(unquote(path[len("/api/drug/"):]))
                 elif path == "/api/diag":
@@ -930,8 +1014,13 @@ def _make_handler(db_path, req_log=None):
                     self._api_create_invoice()
                 elif path == "/api/drugs":
                     self._api_create_drug()
+                elif path == "/api/scan-result":
+                    # v6.23: the phone delivers one scanned barcode.
+                    self._api_scan_result()
                 elif path.startswith("/api/invoices/") and path.endswith("/edit"):
                     self._api_edit_invoice(path)
+                elif path.startswith("/api/invoices/") and path.endswith("/return"):
+                    self._api_return_invoice(path)
                 else:
                     self._send_json(404, {"error": "غير موجود"})
             except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
@@ -1074,6 +1163,46 @@ def _make_handler(db_path, req_log=None):
                 db.close()
             self._send_json(200, {"drugs": out})
 
+        def _api_scan_request(self):
+            """v6.23: GET /api/scan-request -> {"pending": bool, "id": int}.
+            The phone page polls this every few seconds; when the desktop
+            scan dialog opened a request, the page offers to start the
+            camera. PIN required, same as every API."""
+            if not self._require_pin():
+                return
+            self._send_json(200, _scan_phone_view())
+
+        def _api_scan_result(self):
+            """v6.23: POST /api/scan-result {"id": int, "code": str}.
+            Accepts the barcode only while its request is still open and
+            fresh; anything else is a 409 so the phone can say so."""
+            if not self._require_pin():
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except Exception:
+                length = 0
+            if length > Handler._MAX_BODY_BYTES:
+                self._send_json(413, {"error": "الطلب أكبر من المسموح"})
+                return
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                data = json.loads(raw.decode("utf-8") or "{}")
+            except Exception:
+                self._send_json(400, {"error": "بيانات غير صالحة (JSON)"})
+                return
+            if not isinstance(data, dict):
+                self._send_json(400, {"error": "بيانات غير صالحة"})
+                return
+            try:
+                rid = int(data.get("id") or 0)
+            except Exception:
+                rid = 0
+            if _scan_phone_submit(rid, str(data.get("code") or "")):
+                self._send_json(200, {"ok": True})
+            else:
+                self._send_json(409, {"error": "انتهت مهلة طلب المسح — اطلب من جديد من الكمبيوتر"})
+
         def _api_drug(self, barcode):
             if not self._require_pin():
                 return
@@ -1084,6 +1213,27 @@ def _make_handler(db_path, req_log=None):
                 db.close()
             if not drug:
                 self._send_json(404, {"error": "الباركود غير مسجل"})
+                return
+            self._send_json(200, {"drug": _drug_json(drug)})
+
+        def _api_drug_by_id(self, parsed):
+            """v6.10: GET /api/drug?id=<id> — one drug by id (same
+            _drug_json shape as /api/drug/<barcode>). PIN required;
+            non-numeric or unknown id is 404, never a crash."""
+            if not self._require_pin():
+                return
+            try:
+                did = int((parse_qs(parsed.query).get("id", [""])[0] or ""))
+            except Exception:
+                self._send_json(404, {"error": "غير موجود"})
+                return
+            db = self._db()
+            try:
+                drug = db.get_drug(did)
+            finally:
+                db.close()
+            if not drug:
+                self._send_json(404, {"error": "غير موجود"})
                 return
             self._send_json(200, {"drug": _drug_json(drug)})
 
@@ -1242,6 +1392,36 @@ def _make_handler(db_path, req_log=None):
                 self._send_json(404, {"error": "الفاتورة غير موجودة"})
                 return
             self._send_json(200, {"invoice": detail})
+
+        def _api_return_invoice(self, path):
+            """v6.17: POST /api/invoices/<id>/return — FULL return (void)
+            of a completed invoice from the phone: same return_sale()
+            the PC uses — every batch restocked, credit reversed,
+            status -> returned, sale_returns + audit written, one
+            atomic transaction. An empty invoice can never be SAVED by
+            the edit flow, so when the phone user deletes every line
+            and approves, the client offers this explicit full-cancel
+            instead of a dead-end message. A returned invoice is
+            refused (no double restock)."""
+            if not self._require_pin():
+                return
+            try:
+                sid = int(path.split("/")[3])
+            except Exception:
+                self._send_json(400, {"error": "رقم فاتورة غير صحيح"})
+                return
+            with WRITE_LOCK:
+                db = self._db()
+                try:
+                    db.return_sale(sid, "mobile",
+                                   reason="إلغاء كامل من الموبايل")
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                finally:
+                    db.close()
+            self._send_json(200, {"ok": True, "sale_id": sid,
+                                  "message": "أُلغيت الفاتورة (إرجاع كامل) — رجعت الكميات للمخزون"})
 
         def _api_edit_invoice(self, path):
             """v5.5: POST /api/invoices/<id>/edit — same edit_sale()
