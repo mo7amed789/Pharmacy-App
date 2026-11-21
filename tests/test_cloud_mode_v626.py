@@ -36,9 +36,9 @@ sync_src = open(os.path.join(SRC, "cloud_sync.py"), encoding="utf-8").read()
 client_src = open(os.path.join(SRC, "supabase_client.py"), encoding="utf-8").read()
 
 # ---------- 1) الإصدار والكاش ----------
-check("window title at v6.27", "Pharmacy Enterprise v6.28" in main_src)
-check("login label at v6.27", "نظام إدارة الصيدلية — v6.28" in main_src)
-check("sw cache bumped to v627", "pharmacy-mobile-v628" in sw)
+check("window title at v6.27", "Pharmacy Enterprise v6.29" in main_src)
+check("login label at v6.27", "نظام إدارة الصيدلية — v6.29" in main_src)
+check("sw cache bumped to v627", "pharmacy-mobile-v629" in sw)
 
 # ---------- 2) sw لا يعترض حركة السحابة ----------
 check("sw ignores cross-origin (Supabase) traffic",
