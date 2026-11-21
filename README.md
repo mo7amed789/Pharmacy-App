@@ -37,6 +37,36 @@ This is an **empty install**: 0 drugs, 0 sales, 0 customers. No real pharmacy da
 - The mobile PIN is stored in the local database and shown only to the admin on the PC. The QR code contains it — do not share a QR screenshot outside the pharmacy, and regenerate the PIN if it leaks.
 - Change both default passwords on first login and delete `DEFAULT_LOGINS.txt` if you ever create one.
 
+## Cloud sync (Supabase) — v6.11
+
+The app can now sync its product catalog with a Supabase cloud database
+(the same one the Egyptian drugs/cosmetics catalogs live in):
+
+- **Automatic push:** any product added or edited in the app is upserted to
+  the cloud in the background (best effort — offline just records the error
+  in Settings and never blocks a sale). The cloud key is
+  `(catalog, trade_en, strength)`, so re-syncing never duplicates rows.
+- **Pull:** Settings → ☁️ المزامنة السحابية → «سحب الكتالوج من السحابة»
+  downloads all cloud products and updates local prices without duplicates
+  (same merge logic as CSV import). Stock, batches, sales and users stay
+  local — the cloud stores catalog/price data only.
+- **Push all:** «رفع كل الأصناف المحلية للسحابة» uploads every local
+  product in batches, preserving each row's catalog (drug vs cosmetic).
+
+### Setup (one time, per PC)
+
+1. Copy `supabase_config.example.json` to `supabase_config.json` next to
+   `main.py` and fill in your project URL and publishable API key
+   (Supabase dashboard → Project Settings → API Keys).
+   Environment variables `SUPABASE_URL` / `SUPABASE_KEY` work too and take
+   priority. `supabase_config.json` is git-ignored — never commit the key.
+2. Restart the app. The Settings → ☁️ section shows sync status and the
+   last error if the PC was offline.
+
+Files: `supabase_client.py` (stdlib-only PostgREST client),
+`cloud_sync.py` (mapping + push/pull), `tests/test_cloud_sync.py`
+(local tests plus a live API round-trip that runs when the env vars are set).
+
 ## Full Arabic guide
 
 See `README_AR.md` (and `README_AR_V6.9.md` for the latest changes).

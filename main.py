@@ -5105,6 +5105,20 @@ class App:
         ttk.Button(f, text="📤 تصدير الأدوية CSV", command=self.export_drugs).pack(anchor="w", pady=4)
         ttk.Label(f, text="ملف قالب الاستيراد: drugs_template.csv — انسخ منه الصفوف وعدّلها.",
                   style="Muted.TLabel").pack(anchor="w", pady=2)
+        # ---------- v6.11: ☁️ المزامنة السحابية (Supabase) ----------
+        ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
+        ttk.Label(f, text="☁️ المزامنة السحابية:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        self.btn_cloud_pull = ttk.Button(f, text="⬇️ سحب الكتالوج من السحابة (تحديث الأسعار)",
+                                         command=self.cloud_pull)
+        self.btn_cloud_pull.pack(anchor="w", pady=4)
+        self.btn_cloud_push = ttk.Button(f, text="⬆️ رفع كل الأصناف المحلية للسحابة",
+                                         command=self.cloud_push_all)
+        self.btn_cloud_push.pack(anchor="w", pady=4)
+        self.lbl_cloud = ttk.Label(f, text=self._cloud_status_text(), style="Muted.TLabel",
+                                   wraplength=700, justify="left")
+        self.lbl_cloud.pack(anchor="w", pady=2)
+        ttk.Button(f, text="🔄 تحديث حالة المزامنة",
+                   command=lambda: self.lbl_cloud.config(text=self._cloud_status_text())).pack(anchor="w", pady=2)
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(f, text="سجل التدقيق (آخر 50 إجراء):", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.txt_audit = tk.Text(f, width=100, height=12, font=("Segoe UI", 10))
@@ -5293,6 +5307,104 @@ class App:
         messagebox.showinfo("تم", "تم الاستيراد: %d جديد، %d محدّث" % (added, updated))
         self.inv_refresh()
         self.pos_search_refresh()
+
+    # ---------- v6.11: المزامنة السحابية (Supabase) ----------
+    def _cloud_status_text(self):
+        try:
+            import cloud_sync
+            st = cloud_sync.status(self.db)
+        except Exception as e:
+            return "المزامنة السحابية غير متاحة: %s" % e
+        if not st.get("configured"):
+            return ("المزامنة غير مفعّلة بعد. للتفعيل: انسخ الملف supabase_config.example.json "
+                    "إلى supabase_config.json بجوار البرنامج واكتب فيه رابط المشروع والمفتاح، "
+                    "ثم أعد تشغيل البرنامج. بعدها أي صنف جديد أو معدّل يُرفع للسحابة تلقائياً.")
+        parts = ["المزامنة مفعّلة — أي صنف جديد أو معدّل يُرفع للسحابة تلقائياً."]
+        if st.get("last_pull"):
+            parts.append("آخر سحب: " + st["last_pull"])
+        if st.get("last_push"):
+            parts.append("آخر رفع: " + st["last_push"])
+        if st.get("last_error"):
+            parts.append("آخر خطأ: " + st["last_error"])
+        return "\n".join(parts)
+
+    def cloud_pull(self):
+        """سحب كل المنتجات من السحابة ودمجها محلياً (في خيط خلفي)."""
+        import cloud_sync
+        import supabase_client
+        if not supabase_client.is_configured():
+            messagebox.showerror("المزامنة السحابية",
+                                 "إعداد Supabase غير موجود.\nانسخ supabase_config.example.json إلى "
+                                 "supabase_config.json بجوار البرنامج واكتب فيه الرابط والمفتاح.")
+            return
+        if not messagebox.askyesno("سحب الكتالوج من السحابة",
+                                   "سيُسحب كل المنتجات (أدوية + كوزمتكس) من السحابة وتحدّث بياناتها "
+                                   "وأسعارها محلياً بدون تكرار.\nالمخزون والمبيعات لا تتأثر. متابعة؟"):
+            return
+        self.btn_cloud_pull.config(state="disabled")
+        self.show_banner("⏳ جاري سحب الكتالوج من السحابة...", "info")
+        db_path = self.db.path
+        username = self.username
+
+        def work():
+            db = DB(path=db_path, init=False)
+            try:
+                return cloud_sync.pull_catalog(db, username)
+            finally:
+                db.close()
+
+        def done(result, error):
+            def ui():
+                self.btn_cloud_pull.config(state="normal")
+                self.lbl_cloud.config(text=self._cloud_status_text())
+                if error is not None:
+                    messagebox.showerror("خطأ في المزامنة", str(error))
+                    return
+                added, updated, skipped = result
+                self.show_banner("✅ اكتمل السحب من السحابة", "success")
+                messagebox.showinfo("تم", "اكتمل السحب: %d جديد، %d محدّث، %d متجاهَل"
+                                    % (added, updated, skipped))
+                self.inv_refresh()
+                self.pos_search_refresh()
+            self._ui_post(ui)
+        cloud_sync.run_in_background(work, done)
+
+    def cloud_push_all(self):
+        """رفع كل الأصناف المحلية للسحابة على دفعات (في خيط خلفي)."""
+        import cloud_sync
+        import supabase_client
+        if not supabase_client.is_configured():
+            messagebox.showerror("المزامنة السحابية",
+                                 "إعداد Supabase غير موجود.\nانسخ supabase_config.example.json إلى "
+                                 "supabase_config.json بجوار البرنامج واكتب فيه الرابط والمفتاح.")
+            return
+        if not messagebox.askyesno("رفع الأصناف للسحابة",
+                                   "سيُرفع كل الأصناف المحلية إلى السحابة وتحدّث أسعارها هناك "
+                                   "(الصنف الموجود يتحدث ولا يتكرر). متابعة؟"):
+            return
+        self.btn_cloud_push.config(state="disabled")
+        self.show_banner("⏳ جاري رفع الأصناف للسحابة...", "info")
+        db_path = self.db.path
+
+        def work():
+            db = DB(path=db_path, init=False)
+            try:
+                return cloud_sync.push_all(db)
+            finally:
+                db.close()
+
+        def done(result, error):
+            def ui():
+                self.btn_cloud_push.config(state="normal")
+                self.lbl_cloud.config(text=self._cloud_status_text())
+                if error is not None:
+                    messagebox.showerror("خطأ في المزامنة", str(error))
+                    return
+                sent, failed = result
+                self.show_banner("✅ اكتمل الرفع للسحابة", "success")
+                messagebox.showinfo("تم", "اكتمل الرفع: %d صنف، فشل %d" % (sent, failed))
+            self._ui_post(ui)
+        cloud_sync.run_in_background(work, done)
 
     def audit_refresh(self):
         self.txt_audit.delete("1.0", "end")
