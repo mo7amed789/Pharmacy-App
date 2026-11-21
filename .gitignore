@@ -39,3 +39,6 @@ invoice_counter.txt
 # --- generated catalog datasets ---
 catalog/*_catalog.csv
 catalog/eg_drugs_source.csv
+
+# --- cloud sync: real Supabase credentials never committed ---
+supabase_config.json

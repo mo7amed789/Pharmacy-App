@@ -1137,6 +1137,7 @@ class DB:
             self._link_barcode_checked(c, fields["barcode"], drug_id)
         if _commit:
             self.conn.commit()
+            self._cloud_push_async(drug_id)
         return drug_id
 
     @_atomic
@@ -1155,6 +1156,36 @@ class DB:
              float(fields.get("discount_value") or 0), drug_id))
         if _commit:
             self.conn.commit()
+            self._cloud_push_async(drug_id)
+
+    # ---------- cloud sync (v6.11) ----------
+    def _cloud_push_async(self, drug_id):
+        """رفع الصنف للسحابة بعد أي إضافة/تعديل — أفضل جهد ولا يوقف
+        البرنامج إطلاقاً: يعمل في خيط منفصل باتصال خاص (اتصالات SQLite
+        لا تُشارك بين الخيوط)، ولا يفعل شيئاً إن لم يُضبط إعداد Supabase
+        أو أثناء السحب من السحابة (_cloud_mute). أي فشل يُسجَّل في
+        إعداد cloud_last_error ويظهر في شاشة الإعدادات."""
+        if getattr(self, "_cloud_mute", False):
+            return
+        try:
+            import cloud_sync
+            import supabase_client
+        except Exception:
+            return
+        if not supabase_client.is_configured():
+            return
+        path = self.path
+
+        def worker():
+            try:
+                db = DB(path=path, init=False)
+                try:
+                    cloud_sync.push_drug_safe(db, drug_id)
+                finally:
+                    db.close()
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
 
     # ---------- stock / batches / FEFO ----------
     def batches_for(self, drug_id):
