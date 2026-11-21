@@ -262,7 +262,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.27", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.28", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -496,7 +496,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.27 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.28 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         # v6.20: screen-aware default size + sensible minimum + the
         # window reopens with the size, position and maximized state it
@@ -2910,7 +2910,69 @@ class App:
         ttk.Button(btns, text="📥 تصدير الأكثر مبيعاً CSV", command=self.export_best_csv).pack(side="left", padx=4)
         ttk.Button(btns, text="📥 تصدير قيمة المخزون CSV", command=self.export_inventory_csv).pack(side="left", padx=4)
         ttk.Button(btns, text="عرض قيمة المخزون", command=self.show_inventory_value).pack(side="left", padx=4)
+        if self.is_admin:
+            ttk.Button(tab, text="👥 تقرير مبيعات الموظفين", command=self.employee_sales_dialog).pack(anchor="w", padx=14, pady=6)
         self.reports_refresh()
+
+    def employee_sales_dialog(self):
+        if not self.is_admin:
+            return
+        def display(value):
+            # Linux Tk lacks native Arabic bidi. Use the shipped shaping
+            # helpers for this report only; keep stored/exported text logical.
+            value = str(value)
+            if sys.platform != "win32" and receipt_printer is not None:
+                return receipt_printer.visual_order(receipt_printer.shape_arabic(value))
+            return value
+        win = tk.Toplevel(self.root)
+        win.title("مبيعات الموظفين، أساس مراجعة البونص")
+        ui_theme.fit_dialog(win, 1000, 600)
+        controls = ttk.Frame(win)
+        controls.pack(fill="x", padx=10, pady=8)
+        fields = []
+        for label in ("من YYYY-MM-DD", "إلى YYYY-MM-DD"):
+            ttk.Label(controls, text=display(label)).pack(side="left")
+            ent = ttk.Entry(controls, width=13)
+            ent.insert(0, date.today().isoformat())
+            ent.pack(side="left", padx=4)
+            fields.append(ent)
+        keys = ("employee", "full_name", "completed_count", "completed_sales", "returned_count", "returned_sales", "mobile_sales")
+        headers = ("المستخدم", "الاسم", "عدد المكتمل", "مبيعات مكتملة", "عدد المرتجع", "قيمة المرتجع", "موبايل مكتمل")
+        table = ttk.Frame(win)
+        table.pack(fill="both", expand=True, padx=10, pady=8)
+        tree = ttk.Treeview(table, columns=keys, show="headings", height=12)
+        for key, title in zip(keys, headers):
+            tree.heading(key, text=display(title))
+            tree.column(key, width=130, stretch=True)
+        tree.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(table, orient="horizontal", command=tree.xview)
+        scroll.pack(fill="x")
+        tree.configure(xscrollcommand=scroll.set)
+        notes = ["حسب تاريخ الفاتورة الأصلي، كل طرق الدفع والمصادر. المبيعات المكتملة بعد الخصم وتستبعد المرتجع بالكامل.",
+                 "ليست تحصيلات نقدية. التعديلات والمرتجعات اللاحقة تغيّر النتائج، وليست دفتر صرف بونص ثابتاً.",
+                 "mobile = دخول مشترك بلا موظف. لا توجد معادلة بونص مفترضة."]
+        ttk.Label(win, wraplength=930, justify="right", anchor="e", text="\n".join(display(line) for line in notes)).pack(fill="x", padx=10)
+        rows = []
+        def refresh():
+            try:
+                data = self.db.report_employee_sales(fields[0].get().strip(), fields[1].get().strip())
+            except ValueError as e:
+                messagebox.showerror("خطأ", str(e), parent=win)
+                return False
+            rows[:] = [[r[k] for k in keys] for r in data]
+            tree.delete(*tree.get_children())
+            for row in rows:
+                tree.insert("", "end", values=[display(("%.2f" % value) if key.endswith("sales") else value) for key, value in zip(keys, row)])
+            return True
+        def export():
+            if not refresh():
+                return
+            values = [[fields[0].get().strip(), fields[1].get().strip()] + row for row in rows]
+            safe = [[("'" + v) if isinstance(v, str) and v.startswith(("=", "+", "-", "@", "\t", "\r")) else v for v in row] for row in values]
+            self._export_csv("employee_sales.csv", ("date_from", "date_to") + headers, safe)
+        ttk.Button(controls, text=display("عرض"), command=refresh).pack(side="left", padx=4)
+        ttk.Button(controls, text=display("تصدير CSV"), command=export).pack(side="left", padx=4)
+        refresh()
 
     def reports_refresh(self):
         if not hasattr(self, "tree_best"):
@@ -4275,6 +4337,15 @@ class App:
                    command=self.diag_run_async, style="Accent.TButton").pack(side="left", padx=4)
         ttk.Button(diag_btns, text="🛡️ إصلاح الاتصال",
                    command=self.firewall_fix_async, style="Success.TButton").pack(side="left", padx=4)
+        if self.is_admin:
+            shared = tk.BooleanVar(value=self.db.get_setting("mobile_shared_pin_enabled", "1") == "1")
+            def set_shared_mobile():
+                if not shared.get() and not messagebox.askyesno("دخول الموظفين فقط", "إيقاف PIN المشترك؟ تأكد من إنشاء حسابات الموظفين أولاً. الهواتف القديمة ستحتاج الدخول باسم مستخدم وكلمة مرور."):
+                    shared.set(True)
+                    return
+                self.db.set_setting("mobile_shared_pin_enabled", "1" if shared.get() else "0")
+                self.db.audit(self.username, "mobile_shared_access", "enabled=%s" % shared.get())
+            ttk.Checkbutton(tab, text="السماح بـ PIN المشترك القديم (بلا اسم موظف). أوقفه بعد تجهيز حسابات الموظفين", variable=shared, command=set_shared_mobile).pack(anchor="w", padx=12)
         ttk.Button(diag_btns, text="📋 نسخ النتائج",
                    command=self.diag_copy_results).pack(side="left", padx=4)
         self.txt_diag = tk.Text(tab, width=100, height=9, font=("Segoe UI", 11))
