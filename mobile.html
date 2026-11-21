@@ -179,6 +179,7 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
 </header>
 <main>
   <div id="msg" class="msg"></div>
+  <div id="cloudBanner" class="box warn hidden">☁️ <b>وضع السحابة:</b> لا يوجد اتصال مباشر بالكمبيوتر. البيع يعمل عبر الإنترنت وتُسجَّل الفاتورة في البرنامج تلقائياً عند اتصاله بالشبكة. المخزون الحي والسجل وفواتيري والبيع الآجل غير متاحة الآن.</div>
   <div id="toast" class="toast hidden"></div>
 
   <section id="pinScreen" class="card" style="margin-top:20px">
@@ -342,6 +343,139 @@ function api(p,o){o=o||{};o.headers=Object.assign({},o.headers||{},{'X-Mobile-PI
 function chk(r){if(r.status===401){askPin('الرمز غير صحيح.');throw new Error('unauthorized')}if(r.status===429){showMsg('محاولات كثيرة — انتظر دقيقة.');throw new Error('locked')}return r}
 const quiet=e=>e.message==='unauthorized'||e.message==='locked';
 
+/* ---------- v6.26: الوضع السحابي — البيع يستمر حتى بدون واي فاي على الكمبيوتر ---------- */
+/* عندما لا يصل الهاتف لسيرفر الكمبيوتر (لا شبكة مشتركة) يبحث في كتالوج Supabase
+   مباشرة ويدرج الفاتورة في جدول mobile_orders، والبرنامج يسحبها ويسجّلها بنفس
+   منطق البيع المحلي. الرمز (PIN) يُرسل كبصمة SHA-256 فقط — لا يغادر الهاتف أبداً. */
+let cloudMode=false,sbUrl='',sbKey='',probeT=null,orderPoll=null;
+try{sbUrl=localStorage.getItem('pe_sb_url')||'';sbKey=localStorage.getItem('pe_sb_key')||''}catch(e){}
+const cloudReady=()=>!!(sbUrl&&sbKey);
+async function loadCloudConfig(){
+  try{
+    const r=await api('/api/cloud-config');if(!r.ok)return;const d=await r.json();
+    if(d.url&&d.key&&String(d.url).indexOf('https://')===0){
+      sbUrl=String(d.url).replace(/\/+$/,'');sbKey=String(d.key);
+      try{localStorage.setItem('pe_sb_url',sbUrl);localStorage.setItem('pe_sb_key',sbKey)}catch(e){}
+    }
+  }catch(e){}
+}
+function sbFetch(path,o){
+  o=o||{};o.headers=Object.assign({'apikey':sbKey,'Authorization':'Bearer '+sbKey,'Accept':'application/json'},o.headers||{});
+  return fetch(sbUrl+'/rest/v1'+path,o);
+}
+/* نفس حساب الأسعار والوحدات في database.py (unit_price / allowed_units) —
+   كتالوج السحابة لا يحفظ مخزوناً ولا خصومات أصناف. */
+function cloudDrugJson(row){
+  const sell=Number(row.sell_price)||0,spb=Math.max(1,parseInt(row.strips_per_box)||1),tps=Math.max(1,parseInt(row.tablets_per_strip)||1);
+  const form=String(row.form||'').toLowerCase();
+  let units=['box','strip','pill'];
+  if(/cream|ointment|gel|paste|lotion|syrup|suspension|solution|drops?|spray|shampoo|injection|ampoule|vial|كريم|مرهم|جل|معجون|لوشن|شراب|معلق|محلول|نقط|قطرة|بخاخ|شامبو|حقن|أمبول|فيال/.test(form))units=['box'];
+  else if(/suppositor|pessar|ovule|sachet|تحميلة|تحاميل|لبوس|لبوسة|ظرف/.test(form))units=['box','pill'];
+  return {id:'c'+row.id,trade_en:row.trade_en||'',trade_ar:row.trade_ar||'',scientific:row.scientific||'',strength:row.strength||'',form:row.form||'',company:row.company||'',barcode:row.barcode||'',
+    discount_type:'none',discount_value:0,sell_price:sell,
+    price_box:r2(sell),price_strip:r2(sell/spb),price_pill:r2(sell/spb/tps),
+    allowed_units:units,strips_per_box:spb,tablets_per_strip:tps,units_per_box:spb*tps,
+    stock_units:null,stock_boxes:null};
+}
+async function cloudSearch(q){
+  q=String(q||'').replace(/[^\p{L}\p{N} \-_@]/gu,'').trim();if(!q)return[];
+  const like='*'+q.replace(/\*/g,'')+'*';
+  const or='(trade_en.ilike.'+like+',trade_ar.ilike.'+like+',scientific.ilike.'+like+')';
+  const r=await sbFetch('/products?select=*&limit=20&order=trade_en.asc&or='+encodeURIComponent(or));
+  if(!r.ok)throw new Error('sb');return (await r.json()).map(cloudDrugJson);
+}
+async function cloudBarcode(code){
+  const r=await sbFetch('/products?select=*&limit=1&barcode=eq.'+encodeURIComponent(code));
+  if(!r.ok)throw new Error('sb');const rows=await r.json();return rows.length?cloudDrugJson(rows[0]):null;
+}
+function setConnCloud(){$('connDot').className='dot on';$('connText').textContent='☁️ سحابة';$('lastUpdate').textContent=new Date().toTimeString().slice(0,8)}
+function cloudNotice(id){const e=$(id);if(e)e.innerHTML='<p class="muted">☁️ متاحة عند عودة الاتصال المباشر بالكمبيوتر.</p>'}
+function enterCloudMode(){
+  cloudMode=true;$('cloudBanner').classList.remove('hidden');setConnCloud();
+  const pm=$('payMethod'),opt=pm.querySelector('option[value="credit"]');if(opt)opt.disabled=true;
+  if(payment==='credit'){payment='cash';pm.value='cash'}payUI();
+  $('customerSelect').disabled=true;
+  cart=[];clientRef='';renderCart();
+  showMsg('☁️ وضع السحابة: البيع يعمل عبر الإنترنت ويُسجَّل عند الكمبيوتر تلقائياً.','ok');
+  startLanProbe();
+}
+function exitCloudMode(){
+  cloudMode=false;$('cloudBanner').classList.add('hidden');clearTimeout(probeT);clearTimeout(orderPoll);
+  const opt=$('payMethod').querySelector('option[value="credit"]');if(opt)opt.disabled=false;
+  $('customerSelect').disabled=false;
+  cart=[];clientRef='';renderCart();
+}
+function startLanProbe(){
+  clearTimeout(probeT);
+  const tick=async()=>{
+    if(!cloudMode)return;
+    try{
+      const r=await api('/api/customers');
+      if(r.ok){exitCloudMode();loadCustomers();doSearch($('searchInput').value);updateHttpsBanner();startLivePoll();pollLive();startPcScanPoll();showMsg('✅ عاد الاتصال المباشر بالكمبيوتر.','ok');return}
+    }catch(e){}
+    probeT=setTimeout(tick,20000);
+  };
+  probeT=setTimeout(tick,15000);
+}
+async function sha256Hex(s){
+  const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+async function cloudSave(){
+  if(saving)return;hideMsg();
+  if(!cart.length){showMsg('السلة فارغة.');return}
+  if(!(window.crypto&&crypto.subtle)){showMsg('الوضع السحابي يحتاج فتح الصفحة بالرابط الآمن (HTTPS) مرة واحدة على الأقل.');return}
+  const total=cartTotal(),raw=$('paidInput').value.trim();let paid=null;
+  if(payment!=='card'&&raw!==''){
+    paid=parseFloat(raw);
+    if(!isFinite(paid)||paid<0){showMsg('المبلغ المدفوع غير صالح.');return}
+    if(paid<total-0.005){showMsg('المدفوع أقل من الإجمالي ('+f2(total)+' ج.م).');return}
+  }
+  saving=true;$('saveBtn').textContent='جارٍ الإرسال…';
+  try{
+    const pinHash=await sha256Hex(PIN);
+    const ref=clientRef||('m-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10));
+    const payload={items:cart.map(c=>({trade_en:c.name,strength:c.strength||'',barcode:c.barcode||'',unit:c.unit,qty:c.qty})),
+      payment:payment,paid:paid,note:$('noteInput').value.trim(),client_ref:ref,pin_hash:pinHash};
+    const r=await sbFetch('/mobile_orders',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'return=representation'},body:JSON.stringify([{payload:payload}])});
+    if(!r.ok){showMsg(r.status===404?'خدمة السحابة غير مهيأة بعد — أنشئ جدول mobile_orders من ملف docs/supabase_mobile_orders.sql.':'تعذّر إرسال الفاتورة للسحابة — تحقق من إنترنت الهاتف.');return}
+    const rows=await r.json(),oid=rows&&rows[0]&&rows[0].id;
+    cart=[];clientRef='';renderCart();$('noteInput').value='';$('paidInput').value='';
+    ['invView','bar'].forEach(i=>$(i).classList.add('hidden'));$('tabs').classList.add('hidden');
+    $('successScreen').classList.remove('hidden');
+    $('successInv').textContent='⏳ أُرسلت الفاتورة للسحابة — تُسجَّل في البرنامج خلال دقيقة';
+    $('successTotal').innerHTML='الإجمالي <span class="ltr">'+f2(total)+'</span> ج.م';
+    $('successChange').classList.add('hidden');
+    scrollTo(0,0);
+    if(oid!=null)pollCloudOrder(oid);
+  }catch(e){showMsg('تعذّر إرسال الفاتورة للسحابة — تحقق من إنترنت الهاتف.')}
+  finally{saving=false;$('saveBtn').textContent='💾 حفظ الفاتورة'}
+}
+async function pollCloudOrder(oid){
+  clearTimeout(orderPoll);let tries=0;
+  const tick=async()=>{
+    if(tries++>60)return; // الفاتورة محفوظة في السحابة وستُسجَّل عند اتصال الكمبيوتر
+    try{
+      const r=await sbFetch('/mobile_orders?id=eq.'+oid+'&select=status,result');
+      if(r.ok){
+        const rows=await r.json(),o=rows&&rows[0];
+        if(o&&o.status==='done'&&o.result){
+          $('successInv').innerHTML='فاتورة <span class="ltr">'+esc(o.result.invoice_no)+'</span> ✅ سُجِّلت في البرنامج';
+          const ch=$('successChange');
+          if(o.result.change&&Number(o.result.change)>0){ch.innerHTML='الباقي <span class="ltr">'+f2(o.result.change)+'</span> ج.م';ch.classList.remove('hidden')}
+          beep();return;
+        }
+        if(o&&o.status==='failed'){
+          $('successInv').textContent='⚠️ تعذّر تسجيل الفاتورة في البرنامج';
+          showMsg((o.result&&o.result.error)||'رفض الكمبيوتر الفاتورة.');beep(false);return;
+        }
+      }
+    }catch(e){}
+    orderPoll=setTimeout(tick,3000);
+  };
+  tick();
+}
+
 function show(v){
   view=v;
   $('invView').classList.toggle('hidden',v!=='inv');
@@ -350,8 +484,8 @@ function show(v){
   $('bar').classList.toggle('hidden',v!=='inv');
   $('successScreen').classList.add('hidden');
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
-  if(v==='mine')loadMyInvoices();
-  if(v==='hist')loadHistory();
+  if(v==='mine'){cloudMode?cloudNotice('myInvoices'):loadMyInvoices()}
+  if(v==='hist'){cloudMode?cloudNotice('historyList'):loadHistory()}
   scrollTo(0,0);
 }
 function askPin(m){
@@ -372,7 +506,16 @@ function savePin(){
 }
 async function enterApp(){
   $('pinScreen').classList.add('hidden');$('tabs').classList.remove('hidden');show('inv');
-  if(!await loadCustomers()){askPin('الرمز غير صحيح — أدخل الرمز الحالي من تبويب الموبايل.');return}
+  const ok=await loadCustomers();
+  if(ok===false){askPin('الرمز غير صحيح — أدخل الرمز الحالي من تبويب الموبايل.');return}
+  if(ok===null){
+    // لا يوجد اتصال بالكمبيوتر: ادخل وضع السحابة إن كان مهيأً
+    if(cloudReady()){enterCloudMode();return}
+    showMsg('تعذّر الاتصال بالكمبيوتر — والوضع السحابي غير مهيأ بعد (افتح الصفحة مرة والجهازان على نفس الشبكة).');
+    return;
+  }
+  loadCloudConfig();
+  if(cloudMode)exitCloudMode();
   await doSearch('');updateHttpsBanner();startLivePoll();pollLive();startPcScanPoll();
 }
 async function loadCustomers(){
@@ -381,7 +524,7 @@ async function loadCustomers(){
     const s=$('customerSelect');s.querySelectorAll('option:not([value=""])').forEach(o=>o.remove());
     (d.customers||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name+(c.balance?' — دين: '+f2(c.balance)+' ج.م':'');s.appendChild(o)});
     return true;
-  }catch(e){if(quiet(e))return false;showMsg('تعذّر تحميل العملاء.');return true}
+  }catch(e){if(quiet(e))return false;showMsg('تعذّر تحميل العملاء.');return null}
 }
 
 /* ---------- search ---------- */
@@ -389,11 +532,20 @@ let st=null;
 $('searchInput').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(()=>doSearch($('searchInput').value),300)});
 async function doSearch(q){
   if(!(q||'').trim()){$('results').innerHTML='';return}
+  if(cloudMode){
+    try{renderResults(await cloudSearch(q))}catch(e){showMsg('تعذّر البحث في السحابة — تحقق من إنترنت الهاتف.')}
+    return;
+  }
   try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''));chk(r);const d=await r.json();renderResults(d.drugs||[])}
   catch(e){if(!quiet(e))showMsg('تعذّر البحث.')}
 }
 async function searchBarcode(){
   const c=$('searchInput').value.trim();if(!c){showMsg('اكتب رقم الباركود أولاً.');return}
+  if(cloudMode){
+    try{const d=await cloudBarcode(c);if(!d){showUnknown(c);return}renderResults([d])}
+    catch(e){showMsg('تعذّر البحث بالباركود في السحابة.')}
+    return;
+  }
   try{const r=await api('/api/drug/'+encodeURIComponent(c));if(r.status===404){showUnknown(c);return}chk(r);const d=await r.json();renderResults([d.drug])}
   catch(e){if(!quiet(e))showMsg('تعذّر البحث بالباركود.')}
 }
@@ -407,7 +559,9 @@ function drugCards(drugs,onAdd){
     const b=document.createElement('b');b.textContent=d.trade_en+(d.trade_ar?' — '+d.trade_ar:'');
     const m=document.createElement('div');m.className='m';m.textContent=[d.strength,d.form].filter(Boolean).join(' · ')||'—';
     nm.append(b,m);
-    const s=document.createElement('span');const n=Number(d.stock_boxes)||0;s.className='stock'+(n<=0?' low':'');s.textContent=n<=0?'⛔ نفد':'✔ '+n+' علبة';
+    const s=document.createElement('span');
+    if(d.stock_boxes==null){s.className='stock';s.textContent='☁️ سحابة'}
+    else{const n=Number(d.stock_boxes)||0;s.className='stock'+(n<=0?' low':'');s.textContent=n<=0?'⛔ نفد':'✔ '+n+' علبة'}
     t.append(nm,s);
     const u=document.createElement('div');u.className='units';
     const opts=avail(d);u.style.gridTemplateColumns='repeat('+opts.length+',1fr)';opts.forEach(([k,p])=>{
@@ -448,7 +602,7 @@ function addToCart(d,unit,price){
   if(!avail(d).some(x=>x[0]===unit)){showToast('هذه الوحدة غير متاحة لهذا الصنف');return}
   if(!cart.length&&!clientRef)clientRef='m-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
   const f=cart.find(c=>c.drug_id===d.id&&c.unit===unit);
-  if(f)f.qty++;else cart.push({drug_id:d.id,name:d.trade_en,unit,qty:1,unit_price:price,dt:d.discount_type,dv:d.discount_value,su:Number(d.stock_units)||0,upb:upb(d),tps:Number(d.tablets_per_strip)||1});
+  if(f)f.qty++;else cart.push({drug_id:d.id,name:d.trade_en,strength:d.strength||'',barcode:d.barcode||'',unit,qty:1,unit_price:price,dt:d.discount_type,dv:d.discount_value,su:d.stock_units==null?1e9:Number(d.stock_units)||0,upb:upb(d),tps:Number(d.tablets_per_strip)||1});
   renderCart();
 }
 function changeQty(i,x){const c=cart[i];c.qty+=x;if(c.qty<=0){cart.splice(i,1);c.qty=1;showUndo('تم حذف «'+c.name+'»',()=>{cart.splice(Math.min(i,cart.length),0,c);renderCart()})}renderCart()}
@@ -488,6 +642,7 @@ $('payMethod').addEventListener('change',()=>{payment=$('payMethod').value;payUI
 let saving=false;
 async function saveInvoice(){
   if(saving)return;hideMsg();
+  if(cloudMode){cloudSave();return}
   if(!cart.length){showMsg('السلة فارغة.');return}
   if(payment==='credit'&&!$('customerSelect').value){showMsg('الآجل يحتاج عميلاً.');return}
   const total=cartTotal(),raw=$('paidInput').value.trim();let paid=null;
@@ -658,6 +813,16 @@ function onDetected(code){
 async function onScanned(code){
   if(pcScanId!=null){await pcScanDeliver(code);return}
   $('searchInput').value=code;
+  if(cloudMode){
+    try{
+      const d=await cloudBarcode(code);
+      if(!d){showUnknown(code);return}
+      addToCart(d,'box',d.price_box);
+      if(navigator.vibrate)try{navigator.vibrate(100)}catch(e){}
+      beep();showToast('تم مسح: '+d.trade_en+' — '+f2(d.price_box)+' ج.م');
+    }catch(e){showMsg('تعذّر البحث بالباركود في السحابة.')}
+    return;
+  }
   try{
     const r=await api('/api/drug/'+encodeURIComponent(code));
     if(r.status===404){showUnknown(code);return}
@@ -670,8 +835,8 @@ async function onScanned(code){
 
 /* ---------- add new drug (4 steps, nothing saved until the end) ---------- */
 let unknown='',adStep=1;
-function showUnknown(code){beep(false);unknown=String(code||'').trim();$('unknownCode').textContent=unknown;$('unknownBar').classList.remove('hidden');showMsg('الباركود غير مسجل — يمكنك إضافته الآن.')}
-function openAddDrug(){$('unknownBar').classList.add('hidden');$('adBarcode').value=unknown;showAddStep(1);$('addDrugCard').classList.remove('hidden');$('addDrugCard').scrollIntoView();hideMsg()}
+function showUnknown(code){beep(false);unknown=String(code||'').trim();$('unknownCode').textContent=unknown;$('unknownBar').classList.remove('hidden');showMsg(cloudMode?'الباركود غير مسجل — إضافة الأصناف تحتاج اتصالاً مباشراً بالكمبيوتر.':'الباركود غير مسجل — يمكنك إضافته الآن.')}
+function openAddDrug(){if(cloudMode){showMsg('إضافة الأصناف تحتاج اتصالاً مباشراً بالكمبيوتر.');return}$('unknownBar').classList.add('hidden');$('adBarcode').value=unknown;showAddStep(1);$('addDrugCard').classList.remove('hidden');$('addDrugCard').scrollIntoView();hideMsg()}
 function closeAddDrug(){$('addDrugCard').classList.add('hidden');unknown='';adStep=1}
 function showAddStep(n){
   adStep=n;for(let i=1;i<=4;i++)$('adStep'+i).classList.toggle('hidden',i!==n);
@@ -721,6 +886,7 @@ const sched=ms=>{clearTimeout(lt);lt=setTimeout(pollLive,ms)};
 function stopLivePoll(){clearTimeout(lt);lt=null;lFail=0}
 function setConn(ok){$('connDot').className='dot'+(ok?' on':'');$('connText').textContent=ok?'متصل':'غير متصل';if(ok)$('lastUpdate').textContent=new Date().toTimeString().slice(0,8)}
 async function pollLive(){
+  if(cloudMode)return;
   if(document.hidden){sched(30000);return}
   try{
     const ids=[...new Set(cart.map(c=>c.drug_id))];

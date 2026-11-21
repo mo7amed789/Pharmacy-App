@@ -14,7 +14,7 @@
 // updates never reached the phone UI, so the phone kept running an
 // old client against a new server. Now every load asks the server
 // first and falls back to the cache only when the PC is unreachable.
-var CACHE = 'pharmacy-mobile-v625';
+var CACHE = 'pharmacy-mobile-v626';
 var SHELL = ['/', '/zxing.min.js', '/manifest.json',
              '/icon-192.png', '/icon-512.png'];
 
@@ -38,6 +38,10 @@ self.addEventListener('activate', function (e) {
 
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
+  // v6.26: NEVER intercept cross-origin traffic — cloud mode talks
+  // directly to Supabase; those requests must reach the network
+  // untouched and must never get the cached shell as a fallback.
+  if (url.origin !== self.location.origin) return;
   // NEVER intercept API traffic — always the live network.
   if (url.pathname.indexOf('/api/') === 0) return;
   if (e.request.method !== 'GET') return;
