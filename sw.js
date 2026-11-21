@@ -1,4 +1,4 @@
-// Pharmacy Enterprise — mobile PWA service worker (v6.2).
+// Pharmacy Enterprise — mobile PWA service worker.
 // Caches ONLY the app shell: the landing page, the ZXing bundle,
 // the manifest and the icons. API responses (/api/*) are NEVER
 // cached and NEVER served from cache — invoice and stock data must
@@ -7,7 +7,14 @@
 // secure context) the page keeps working exactly as before — the
 // service worker is an install/offline-shell bonus, not a
 // requirement. Install works over HTTPS (port 8443).
-var CACHE = 'pharmacy-mobile-v1';
+//
+// v6.16: the cache name carries the app version and the shell is
+// NETWORK-FIRST. The old cache-first handler pinned the phone to
+// whatever page version was cached at the first HTTPS visit — app
+// updates never reached the phone UI, so the phone kept running an
+// old client against a new server. Now every load asks the server
+// first and falls back to the cache only when the PC is unreachable.
+var CACHE = 'pharmacy-mobile-v616';
 var SHELL = ['/', '/zxing.min.js', '/manifest.json',
              '/icon-192.png', '/icon-512.png'];
 
@@ -34,19 +41,18 @@ self.addEventListener('fetch', function (e) {
   // NEVER intercept API traffic — always the live network.
   if (url.pathname.indexOf('/api/') === 0) return;
   if (e.request.method !== 'GET') return;
+  // Network-first: try the live server, refresh the cached copy, and
+  // only when the PC is unreachable fall back to the cached shell.
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then(function (hit) {
-      if (hit) return hit;
-      return fetch(e.request).then(function (res) {
-        if (res && res.ok) {
-          var copy = res.clone();
-          caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
-        }
-        return res;
-      }).catch(function () {
-        // offline and not in cache: fall back to the cached shell
-        return caches.match('/');
-      });
+    fetch(e.request).then(function (res) {
+      if (res && res.ok) {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+      }
+      return res;
+    }).catch(function () {
+      return caches.match(e.request, { ignoreSearch: true })
+        .then(function (hit) { return hit || caches.match('/'); });
     })
   );
 });
