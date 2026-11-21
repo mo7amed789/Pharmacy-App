@@ -262,7 +262,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground=_lpal["accent"]).pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.21", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.22", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -389,7 +389,7 @@ def force_password_change_dialog(root, db, user, old_password=None):
     changed = {"ok": False}
     win = tk.Toplevel(root)
     win.title("غيّر كلمة المرور الافتراضية")
-    win.geometry("460x330")
+    ui_theme.fit_dialog(win, 460, 330)
     win.resizable(False, False)
     try:
         win.transient(root)
@@ -496,7 +496,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.21 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.22 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         # v6.20: screen-aware default size + sensible minimum + the
         # window reopens with the size, position and maximized state it
@@ -847,7 +847,7 @@ class App:
     def show_shortcuts(self):
         win = tk.Toplevel(self.root)
         win.title("اختصارات لوحة المفاتيح — F1")
-        win.geometry("480x380")
+        ui_theme.fit_dialog(win, 480, 380)
         txt = tk.Text(win, width=56, height=18, font=("Segoe UI", 12))
         txt.pack(fill="both", expand=True, padx=12, pady=12)
         txt.insert("1.0",
@@ -1548,7 +1548,7 @@ class App:
         up = unit_price(d, it["pack_level"])
         win = tk.Toplevel(self.root)
         win.title("خصم السطر — %s" % d["trade_en"])
-        win.geometry("420x300")
+        ui_theme.fit_dialog(win, 420, 300)
         ttk.Label(win, text="%s — %s — سعر الوحدة: %s" % (
             d["trade_en"], it["pack_level"], money(up)),
             wraplength=380).pack(padx=12, pady=8)
@@ -1727,6 +1727,8 @@ class App:
                   "الباقي: %s" % money(change), "شكراً لزيارتك"]
         win = tk.Toplevel(self.root)
         win.title("إيصال %s" % inv)
+        # v6.22: cap to the screen so the print button stays visible.
+        ui_theme.fit_dialog(win, 520, 470)
         txt = tk.Text(win, width=52, height=22, font=("Consolas", 11))
         txt.pack(padx=10, pady=10)
         txt.insert("1.0", "\n".join(lines))
@@ -1739,7 +1741,7 @@ class App:
     def unknown_barcode_dialog(self, code):
         win = tk.Toplevel(self.root)
         win.title("باركود غير معروف")
-        win.geometry("520x420")
+        ui_theme.fit_dialog(win, 520, 420)
         ttk.Label(win, text="الباركود %s غير مسجل في قاعدة البيانات." % code,
                   font=("Segoe UI", 11, "bold"), wraplength=480).pack(pady=10)
         ttk.Label(win, text="الباركود رقم تعريف فقط — لا يحتوي على سعر. اربطه مرة واحدة بدواء موجود، أو أضف دواء جديد بسعره، وبعدها أي سكان لنفس الباركود سيعمل تلقائياً.",
@@ -1879,15 +1881,19 @@ class App:
         phone = self.db.get_setting("pharmacy_phone", "") or ""
         win = tk.Toplevel(self.root)
         win.title("ملصق باركود الصيدلية — %s" % drug["trade_en"])
-        win.geometry("460x640")
-        ttk.Label(win, text=drug["trade_en"], font=("Segoe UI", 13, "bold"),
+        # v6.22: fit the real screen; the form scrolls and the print
+        # button lives in a footer that never hides.
+        ui_theme.fit_dialog(win, 460, 640)
+        win.minsize(400, 340)
+        _form, _footer = ui_theme.dialog_form_area(win, self.theme_name)
+        ttk.Label(_form, text=drug["trade_en"], font=("Segoe UI", 13, "bold"),
                   wraplength=420).pack(pady=6)
         if drug.get("trade_ar"):
-            ttk.Label(win, text=drug["trade_ar"], font=("Segoe UI", 12),
+            ttk.Label(_form, text=drug["trade_ar"], font=("Segoe UI", 12),
                       wraplength=420).pack()
         _info = "التركيز: %s   الشكل: %s" % (drug.get("strength", "") or "—", drug.get("form", "") or "—")
-        ttk.Label(win, text=_info, style="Muted.TLabel").pack(pady=2)
-        ttk.Label(win, text="الباركود: %s%s" % (bc, "  (باركود داخلي مولَّد تلقائياً — احفظه، فهو ثابت لهذا الدواء)" if was_auto else ""),
+        ttk.Label(_form, text=_info, style="Muted.TLabel").pack(pady=2)
+        ttk.Label(_form, text="الباركود: %s%s" % (bc, "  (باركود داخلي مولَّد تلقائياً — احفظه، فهو ثابت لهذا الدواء)" if was_auto else ""),
                   font=("Consolas", 12), wraplength=420).pack(pady=4)
         # --- barcode preview: real EAN-13 bars as an image ---
         self._label_preview_img = None
@@ -1895,12 +1901,12 @@ class App:
             import base64 as _b64
             _png = ean13_png_bytes(bc, scale=3, height=56)
             self._label_preview_img = tk.PhotoImage(data=_b64.b64encode(_png).decode("ascii"))
-            ttk.Label(win, image=self._label_preview_img, background="white").pack(pady=4)
-            ttk.Label(win, text=bc, font=("Consolas", 13)).pack()
+            ttk.Label(_form, image=self._label_preview_img, background="white").pack(pady=4)
+            ttk.Label(_form, text=bc, font=("Consolas", 13)).pack()
         except Exception:
-            ttk.Label(win, text="(معاينة الأعمدة غير متاحة — رقم الباركود مطبوع كنص)",
+            ttk.Label(_form, text="(معاينة الأعمدة غير متاحة — رقم الباركود مطبوع كنص)",
                       style="Muted.TLabel").pack()
-        ttk.Label(win, text="اختر ما يظهر على الملصق:", font=("Segoe UI", 11, "bold")).pack(
+        ttk.Label(_form, text="اختر ما يظهر على الملصق:", font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=16, pady=(10, 2))
         vars_ = {}
         for _key, _lbl in (("name", "اسم الدواء"), ("pharmacy", "اسم الصيدلية"),
@@ -1908,25 +1914,25 @@ class App:
                            ("barcode", "الباركود (أعمدة + رقم)")):
             _v = tk.BooleanVar(value=True)
             vars_[_key] = _v
-            ttk.Checkbutton(win, text=_lbl, variable=_v).pack(anchor="w", padx=20)
-        _sel_row = ttk.Frame(win)
+            ttk.Checkbutton(_form, text=_lbl, variable=_v).pack(anchor="w", padx=20)
+        _sel_row = ttk.Frame(_form)
         _sel_row.pack(fill="x", padx=16, pady=4)
         ttk.Button(_sel_row, text="✅ اختيار الكل",
                    command=lambda: [v.set(True) for v in vars_.values()]).pack(side="left", padx=2)
         ttk.Button(_sel_row, text="❌ إلغاء الكل",
                    command=lambda: [v.set(False) for v in vars_.values()]).pack(side="left", padx=2)
-        ttk.Label(win, text="حجم الملصق:").pack(anchor="w", padx=16, pady=(6, 0))
+        ttk.Label(_form, text="حجم الملصق:").pack(anchor="w", padx=16, pady=(6, 0))
         var_size = tk.StringVar(value="50x25")
-        _sz = ttk.Frame(win)
+        _sz = ttk.Frame(_form)
         _sz.pack(anchor="w", padx=16)
         ttk.Radiobutton(_sz, text="50 × 25 مم", variable=var_size, value="50x25").pack(side="left")
         ttk.Radiobutton(_sz, text="38 × 25 مم", variable=var_size, value="38x25").pack(side="left")
-        ttk.Label(win, text="عدد النسخ:").pack(anchor="w", padx=16, pady=(6, 0))
-        e_copies = ttk.Entry(win, width=6)
+        ttk.Label(_form, text="عدد النسخ:").pack(anchor="w", padx=16, pady=(6, 0))
+        e_copies = ttk.Entry(_form, width=6)
         e_copies.pack(anchor="w", padx=16)
         e_copies.insert(0, "1")
         if not phone:
-            ttk.Label(win, text="⚠️ لم يُسجَّل تليفون للصيدلية بعد — أضفه من الإعدادات ليظهر على الملصق.",
+            ttk.Label(_form, text="⚠️ لم يُسجَّل تليفون للصيدلية بعد — أضفه من الإعدادات ليظهر على الملصق.",
                       wraplength=420, style="Muted.TLabel").pack(padx=16, pady=4)
 
         def do_print_label():
@@ -1988,7 +1994,7 @@ class App:
                 win.destroy()
             else:
                 messagebox.showinfo("لم يُطبع بعد", "حُفظ في:\n%s\n%s" % (path, msg))
-        ttk.Button(win, text="🏷️ طباعة الملصق", style="Success.TButton",
+        ttk.Button(_footer, text="🏷️ طباعة الملصق", style="Success.TButton",
                    command=do_print_label).pack(pady=10)
 
     def drug_dialog(self, drug=None, prefill_barcode=""):
@@ -2001,8 +2007,12 @@ class App:
         win = tk.Toplevel(self.root)
         win.title("تعديل دواء" if drug else "إضافة دواء جديد")
         # v6.3: taller dialog — discount fields + label button added.
-        win.geometry("480x900")
-        win.minsize(440, 600)
+        # v6.22: the fixed 480x900 clipped the Save button off-screen on
+        # small laptops / 150% scaling — fit the real screen, scroll the
+        # form, and pin the action button in a footer that never hides.
+        ui_theme.fit_dialog(win, 480, 900)
+        win.minsize(420, 360)
+        _form, _footer = ui_theme.dialog_form_area(win, self.theme_name)
         fields = {}
         labels = [("trade_en", "الاسم التجاري (إنجليزي) *"), ("trade_ar", "الاسم التجاري (عربي)"),
                   ("scientific", "المادة الفعالة"), ("company", "الشركة"),
@@ -2012,7 +2022,7 @@ class App:
                   ("buy_price", "سعر الشراء (للعلبة)"), ("sell_price", "سعر البيع (للعلبة)"),
                   ("min_stock", "الحد الأدنى للمخزون (علبة)"), ("barcode", "باركود العلبة (GTIN) — امسح بالماسح ثم Enter")]
         for key, lbl in labels:
-            ttk.Label(win, text=lbl).pack(anchor="w", padx=12, pady=(6, 0))
+            ttk.Label(_form, text=lbl).pack(anchor="w", padx=12, pady=(6, 0))
             val = ""
             if drug:
                 val = str(drug.get(key, ""))
@@ -2025,19 +2035,19 @@ class App:
             if key == "form":
                 # v6.3: dropdown of common pharmaceutical forms AND
                 # free text — the user can type any other form.
-                cb = ttk.Combobox(win, width=44, values=['Tablets', 'Capsules', 'Syrup', 'Suspension', 'Drops', 'Cream', 'Ointment', 'Gel', 'Spray', 'Injection', 'Sachet', 'Suppository'])
+                cb = ttk.Combobox(_form, width=44, values=['Tablets', 'Capsules', 'Syrup', 'Suspension', 'Drops', 'Cream', 'Ointment', 'Gel', 'Spray', 'Injection', 'Sachet', 'Suppository'])
                 cb.pack(padx=12)
                 cb.set(val)
                 fields[key] = cb
             else:
-                ent = ttk.Entry(win, width=46)
+                ent = ttk.Entry(_form, width=46)
                 ent.pack(padx=12)
                 ent.insert(0, val)
                 fields[key] = ent
         # --- v6.3: per-drug discount (percent OR fixed amount per unit) ---
-        ttk.Label(win, text="خصم الدواء الافتراضي (يُطبق تلقائياً عند البيع — ويمكن تغييره في الفاتورة):").pack(
+        ttk.Label(_form, text="خصم الدواء الافتراضي (يُطبق تلقائياً عند البيع — ويمكن تغييره في الفاتورة):").pack(
             anchor="w", padx=12, pady=(10, 0))
-        _disc_row = ttk.Frame(win)
+        _disc_row = ttk.Frame(_form)
         _disc_row.pack(fill="x", padx=12)
         var_disc_type = tk.StringVar(value="none")
         if drug:
@@ -2046,8 +2056,8 @@ class App:
         ttk.Radiobutton(_disc_row, text="بدون خصم", variable=var_disc_type, value="none").pack(side="left")
         ttk.Radiobutton(_disc_row, text="نسبة %", variable=var_disc_type, value="percent").pack(side="left")
         ttk.Radiobutton(_disc_row, text="مبلغ ثابت (ج.م) لكل وحدة", variable=var_disc_type, value="amount").pack(side="left")
-        ttk.Label(win, text="قيمة الخصم:").pack(anchor="w", padx=12, pady=(4, 0))
-        e_disc_val = ttk.Entry(win, width=46)
+        ttk.Label(_form, text="قيمة الخصم:").pack(anchor="w", padx=12, pady=(4, 0))
+        e_disc_val = ttk.Entry(_form, width=46)
         e_disc_val.pack(padx=12)
         e_disc_val.insert(0, str(drug.get("discount_value") or 0) if drug else "0")
         # v6.3: a USB barcode scanner types the digits + Enter — Enter
@@ -2093,7 +2103,7 @@ class App:
             else:
                 messagebox.showinfo("تم", "تم الحفظ بنجاح")
         fields["barcode"].bind("<Return>", lambda e: save())
-        ttk.Button(win, text="💾 حفظ", command=save, style="Success.TButton").pack(pady=14)
+        ttk.Button(_footer, text="💾 حفظ", command=save, style="Success.TButton").pack(pady=4)
 
     def drug_edit_selected(self):
         d = self._selected_inv_drug()
@@ -2106,7 +2116,7 @@ class App:
             return
         win = tk.Toplevel(self.root)
         win.title("تشغيلات: %s" % d["trade_en"])
-        win.geometry("620x360")
+        ui_theme.fit_dialog(win, 620, 360)
         cols = ("batch", "expiry", "qty", "buy_unit")
         tree = ttk.Treeview(win, columns=cols, show="headings")
         for c, t in zip(cols, ("رقم التشغيلة", "تاريخ الصلاحية", "الكمية (حبة/وحدة)", "سعر شراء الوحدة")):
@@ -2151,6 +2161,9 @@ class App:
         if not rows:
             txt.insert("end", "لا توجد نواقص حالياً ✅")
         txt.config(state="disabled")
+        # v6.22: cap the window to the real screen (keeps natural size
+        # when it fits, shrinks/centres when it does not).
+        ui_theme.fit_dialog(win, win.winfo_reqwidth(), win.winfo_reqheight())
 
     def show_expiry(self):
         rows = self.db.near_expiry(90)
@@ -2170,6 +2183,9 @@ class App:
         if not rows:
             txt.insert("end", "لا توجد أصناف قريبة الانتهاء ✅")
         txt.config(state="disabled")
+        # v6.22: cap the window to the real screen (keeps natural size
+        # when it fits, shrinks/centres when it does not).
+        ui_theme.fit_dialog(win, win.winfo_reqwidth(), win.winfo_reqheight())
 
     def export_drugs(self):
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
@@ -2396,7 +2412,7 @@ class App:
         line = self.purchase_lines[idx]
         win = tk.Toplevel(self.root)
         win.title("تعديل سطر فاتورة الشراء — %s" % line["drug"]["trade_en"])
-        win.geometry("420x380")
+        ui_theme.fit_dialog(win, 420, 380)
         fields = {}
         for key, lbl, val in [
                 ("qty", "عدد العلب:", str(int(line["qty_boxes"]))),
@@ -2508,7 +2524,7 @@ class App:
             return
         win = tk.Toplevel(self.root)
         win.title("↩️ مرتجع مشتريات")
-        win.geometry("560x520")
+        ui_theme.fit_dialog(win, 560, 520)
         ttk.Label(win, text="المورد:").pack(anchor="w", padx=10, pady=(8, 0))
         cb_sup = ttk.Combobox(win, width=40, state="readonly",
                               values=[s["name"] for s in sups])
@@ -2660,7 +2676,7 @@ class App:
     def add_customer_dialog(self):
         win = tk.Toplevel(self.root)
         win.title("عميل جديد")
-        win.geometry("380x300")
+        ui_theme.fit_dialog(win, 380, 300)
         ents = {}
         for key, lbl in [("name", "الاسم *"), ("phone", "الهاتف"),
                          ("limit", "حد الائتمان (ج.م)"), ("notes", "ملاحظات")]:
@@ -2711,6 +2727,9 @@ class App:
         if not rows:
             txt.insert("end", "لا توجد مشتريات مسجلة بعد.")
         txt.config(state="disabled")
+        # v6.22: cap the window to the real screen (keeps natural size
+        # when it fits, shrinks/centres when it does not).
+        ui_theme.fit_dialog(win, win.winfo_reqwidth(), win.winfo_reqheight())
 
     # ---------- Reports ----------
     def build_reports(self, tab=None):
@@ -2796,7 +2815,7 @@ class App:
         with the 3s live poll while open. Double-click = detail window."""
         win = tk.Toplevel(self.root)
         win.title("📋 كل الفواتير")
-        win.geometry("1100x600")
+        ui_theme.fit_dialog(win, 1100, 600)
         self._inv_win = win
         self._inv_rows = []
         f = ttk.Frame(win)
@@ -2930,7 +2949,7 @@ class App:
         items = self.db.get_grouped_sale_items(s["id"])
         win = tk.Toplevel(self.root)
         win.title("فاتورة %s" % s["invoice_no"])
-        win.geometry("750x550")
+        ui_theme.fit_dialog(win, 750, 550)
         info = ("رقم الفاتورة: %s\nالتاريخ والوقت: %s\nالعميل: %s\nالكاشير: %s\n"
                 "المصدر: %s\nطريقة الدفع: %s\nالمدفوع: %s\nالحالة: %s" % (
                     s["invoice_no"], (s.get("created_at") or s.get("date") or "").replace("T", " "),
@@ -3054,7 +3073,7 @@ class App:
                     orig_cust_name = _c["name"]
         win = tk.Toplevel(self.root)
         win.title("✏️ تعديل فاتورة %s" % sale["invoice_no"])
-        win.geometry("900x650")
+        ui_theme.fit_dialog(win, 900, 650)
         old_total = float(sale["total"])
         ttk.Label(win, text="فاتورة: %s — التاريخ: %s — الإجمالي القديم: %s" % (
             sale["invoice_no"], sale["date"], money(old_total)),
@@ -3468,6 +3487,9 @@ class App:
         for r in rows[:60]:
             txt.insert("end", "- %s: %s وحدة — تكلفة %s\n" % (r["trade_en"], r["units"], money(r["cost_value"] or 0)))
         txt.config(state="disabled")
+        # v6.22: cap the window to the real screen (keeps natural size
+        # when it fits, shrinks/centres when it does not).
+        ui_theme.fit_dialog(win, win.winfo_reqwidth(), win.winfo_reqheight())
 
     # ---------- Cash / Shifts ----------
     def build_cash(self, tab=None):
@@ -3831,7 +3853,7 @@ class App:
             by_supplier.setdefault(r["supplier_name"], []).append(r)
         win = tk.Toplevel(self.root)
         win.title("قائمة الطلب المقترحة — مسودة (لم تُحفظ بعد)")
-        win.geometry("720x480")
+        ui_theme.fit_dialog(win, 720, 480)
         txt = tk.Text(win, width=88, height=20, font=("Segoe UI", 11))
         txt.pack(fill="both", expand=True, padx=10, pady=10)
         total_est = 0.0
@@ -5122,6 +5144,9 @@ class App:
             win.destroy()
         ttk.Button(win, text="🖨️ طباعة", command=do_print,
                    style="Success.TButton").pack(pady=(0, 10))
+        # v6.22: cap the window to the real screen (keeps natural size
+        # when it fits, shrinks/centres when it does not).
+        ui_theme.fit_dialog(win, win.winfo_reqwidth(), win.winfo_reqheight())
 
     def mobile_print_selected(self):
         sale = self._selected_mobile_sale()
@@ -5143,6 +5168,9 @@ class App:
         if not rows:
             txt.insert("end", "لا توجد فواتير من الهاتف بعد.")
         txt.config(state="disabled")
+        # v6.22: cap the window to the real screen (keeps natural size
+        # when it fits, shrinks/centres when it does not).
+        ui_theme.fit_dialog(win, win.winfo_reqwidth(), win.winfo_reqheight())
 
     # ---------- Settings ----------
     def build_settings(self, outer=None):
@@ -5390,7 +5418,7 @@ class App:
         confirmation (was: any 4-char password, no checks at all)."""
         win = tk.Toplevel(self.root)
         win.title("تغيير كلمة المرور")
-        win.geometry("420x320")
+        ui_theme.fit_dialog(win, 420, 320)
         win.resizable(False, False)
         ents = {}
         for key, lbl in [("current", "كلمة المرور الحالية"),
@@ -5427,7 +5455,7 @@ class App:
     def add_user_dialog(self):
         win = tk.Toplevel(self.root)
         win.title("مستخدم جديد")
-        win.geometry("360x260")
+        ui_theme.fit_dialog(win, 360, 260)
         ents = {}
         for key, lbl in [("username", "اسم المستخدم"), ("password", "كلمة المرور"), ("full", "الاسم الكامل")]:
             ttk.Label(win, text=lbl).pack(anchor="w", padx=12, pady=(8, 0))
