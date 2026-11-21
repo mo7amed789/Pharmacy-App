@@ -890,6 +890,11 @@ def _make_handler(db_path, req_log=None):
                     self._api_drugs(parsed)
                 elif path == "/api/live":
                     self._api_live(parsed)
+                elif path == "/api/drug":
+                    # v6.10: single-drug lookup by id (?id=123) — the
+                    # lightweight cart refresh for ONE drug, without
+                    # re-fetching the whole drug list.
+                    self._api_drug_by_id(parsed)
                 elif path.startswith("/api/drug/"):
                     self._api_drug(unquote(path[len("/api/drug/"):]))
                 elif path == "/api/diag":
@@ -1084,6 +1089,27 @@ def _make_handler(db_path, req_log=None):
                 db.close()
             if not drug:
                 self._send_json(404, {"error": "الباركود غير مسجل"})
+                return
+            self._send_json(200, {"drug": _drug_json(drug)})
+
+        def _api_drug_by_id(self, parsed):
+            """v6.10: GET /api/drug?id=<id> — one drug by id (same
+            _drug_json shape as /api/drug/<barcode>). PIN required;
+            non-numeric or unknown id is 404, never a crash."""
+            if not self._require_pin():
+                return
+            try:
+                did = int((parse_qs(parsed.query).get("id", [""])[0] or ""))
+            except Exception:
+                self._send_json(404, {"error": "غير موجود"})
+                return
+            db = self._db()
+            try:
+                drug = db.get_drug(did)
+            finally:
+                db.close()
+            if not drug:
+                self._send_json(404, {"error": "غير موجود"})
                 return
             self._send_json(200, {"drug": _drug_json(drug)})
 

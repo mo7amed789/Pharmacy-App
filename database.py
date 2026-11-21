@@ -1593,6 +1593,60 @@ class DB:
             ORDER BY si.id""", (sale_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    @staticmethod
+    def group_sale_items(items):
+        """v6.10: group split FEFO rows into ONE display line per
+        (drug_id, pack_level, unit_price).
+
+        create_sale writes one sale_items row per batch allocation, so
+        a drug sold from 2 batches has 2 rows for the same drug+unit.
+        The raw rows stay in the DB (FEFO/restock accounting must not
+        change); only the DISPLAY/EDIT view is grouped. Sums:
+        qty_display, qty_units, line_total, line_discount. unit_price
+        is the same on every split row; buy_price_unit is the
+        qty-weighted average across the split rows, so profit shown
+        for the grouped line is correct. batch_id is None: a grouped
+        line is not one batch.
+        """
+        grouped = {}
+        order = []
+        for item in items:
+            key = (item.get("drug_id"), item.get("pack_level"),
+                   float(item.get("unit_price") or 0))
+            cur = grouped.get(key)
+            if cur is None:
+                cur = dict(item)
+                cur["batch_id"] = None
+                cur["_w_buy"] = float(cur.get("buy_price_unit") or 0) * int(
+                    cur.get("qty_units") or 0)
+                grouped[key] = cur
+                order.append(cur)
+                continue
+            qty = int(item.get("qty_units") or 0)
+            cur["_w_buy"] += float(item.get("buy_price_unit") or 0) * qty
+            cur["qty_display"] = _round(
+                float(cur.get("qty_display") or 0) +
+                float(item.get("qty_display") or 0))
+            cur["qty_units"] = int(cur.get("qty_units") or 0) + qty
+            cur["line_total"] = _round(
+                float(cur.get("line_total") or 0) +
+                float(item.get("line_total") or 0))
+            cur["line_discount"] = _round(
+                float(cur.get("line_discount") or 0) +
+                float(item.get("line_discount") or 0))
+        for cur in order:
+            units = int(cur.get("qty_units") or 0)
+            cur["buy_price_unit"] = _round(cur.pop("_w_buy") / units) if units else 0.0
+        return order
+
+    def get_grouped_sale_items(self, sale_id):
+        """v6.10: the invoice lines as the user sees/edits them — one
+        line per drug+unit, split FEFO rows merged (see group_sale_items).
+        Use this for invoice detail, invoice editing and receipts.
+        get_sale_items() keeps returning the raw split rows for
+        restock/return accounting."""
+        return self.group_sale_items(self.get_sale_items(sale_id))
+
     @_atomic
     def return_sale(self, sale_id, user, return_shift_id=None,
                     refund_method=None, reason=""):
@@ -1849,26 +1903,7 @@ class DB:
         sale = self.get_sale(sale_id)
         if not sale:
             return None
-        items = self.get_sale_items(sale_id)
-        display_items = []
-        grouped_items = {}
-        for item in items:
-            key = (item["drug_id"], item["pack_level"],
-                   float(item["unit_price"] or 0))
-            current = grouped_items.get(key)
-            if current is None:
-                current = dict(item)
-                current["batch_id"] = None
-                grouped_items[key] = current
-                display_items.append(current)
-                continue
-            current["qty_display"] = _round(
-                float(current["qty_display"] or 0) + float(item["qty_display"] or 0))
-            current["qty_units"] = int(current["qty_units"] or 0) + int(item["qty_units"] or 0)
-            current["line_total"] = _round(
-                float(current["line_total"] or 0) + float(item["line_total"] or 0))
-            current["line_discount"] = _round(
-                float(current["line_discount"] or 0) + float(item["line_discount"] or 0))
+        display_items = self.get_grouped_sale_items(sale_id)
         cust = ""
         if sale.get("customer_id"):
             row = self.conn.execute("SELECT name FROM customers WHERE id=?",

@@ -34,3 +34,8 @@ tests/srv/
 # --- the plaintext default-passwords file: delete after changing
 # both passwords; never commit it if it still exists ---
 DEFAULT_LOGINS.txt
+invoice_counter.txt
+
+# --- generated catalog datasets ---
+catalog/*_catalog.csv
+catalog/eg_drugs_source.csv

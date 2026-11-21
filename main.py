@@ -254,7 +254,7 @@ class LoginWindow:
             _pname = "صيدلية المؤسسة"
         ttk.Label(self.root, text=_pname, font=("Segoe UI", 16, "bold"),
                   foreground="#0F766E").pack(pady=2)
-        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.4", font=("Segoe UI", 12)).pack()
+        ttk.Label(self.root, text="نظام إدارة الصيدلية — v6.10", font=("Segoe UI", 12)).pack()
         ttk.Label(self.root, text="لوحة تحكم • كاشير سريع • تنبؤ ذكي",
                   font=("Segoe UI", 10), style="Muted.TLabel").pack(pady=(2, 8))
         ttk.Label(self.root, text="اسم المستخدم").pack(pady=(14, 2))
@@ -488,7 +488,7 @@ class App:
         self.ui_font_delta = ui_theme.font_scale_for(self.ui_font_size)
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
-        root.title("Pharmacy Enterprise v6.6 — صيدلية المؤسسة | المستخدم: %s (%s)" %
+        root.title("Pharmacy Enterprise v6.10 — صيدلية المؤسسة | المستخدم: %s (%s)" %
                    (self.username, "مدير" if self.is_admin else "كاشير"))
         root.geometry("1280x800")
         root.minsize(1100, 650)
@@ -2802,7 +2802,7 @@ class App:
         if not s:
             messagebox.showinfo("تنبيه", "اختر فاتورة من القائمة أولاً (أو اضغط مرتين عليها)")
             return
-        items = self.db.get_sale_items(s["id"])
+        items = self.db.get_grouped_sale_items(s["id"])
         win = tk.Toplevel(self.root)
         win.title("فاتورة %s" % s["invoice_no"])
         win.geometry("750x550")
@@ -2884,7 +2884,7 @@ class App:
                                 "لا يمكن تعديل هذه الفاتورة — حالتها: %s.\n"
                                 "الفاتورة المُرجعة لا تُعدَّل." % sale["status"])
             return
-        items = self.db.get_sale_items(sale_id)
+        items = self.db.get_grouped_sale_items(sale_id)
         # working cart: dicts {drug, pack_level, qty_display}
         # v5.8: staged deletion — a line deleted here is only HELD
         # (held=True) until the edit is approved. Nothing is removed
@@ -4777,7 +4777,7 @@ class App:
         return self.mobile_rows[self.tree_mobile.index(sel[0])]
 
     def receipt_lines_for_sale(self, sale):
-        items = self.db.get_sale_items(sale["id"])
+        items = self.db.get_grouped_sale_items(sale["id"])
         lines = ["Pharmacy Enterprise",
                  self.db.get_setting("pharmacy_name", "صيدلية المؤسسة") or "صيدلية المؤسسة"]
         _phone = self.db.get_setting("pharmacy_phone", "")
