@@ -1342,7 +1342,22 @@ class DB:
                 raise ValueError("الكمية يجب أن تكون عدداً صحيحاً (بدون كسور) — حتى للحبة الواحدة")
             if it["pack_level"] not in allowed_units(drug):
                 raise ValueError("الوحدة %s غير متاحة لهذا الشكل الصيدلاني" % it["pack_level"])
-            up = unit_price(drug, it["pack_level"])
+            # v6.16: an explicit "unit_price" on the line is the price
+            # the cashier SAW for that line (the phone invoice-edit
+            # flow prices existing lines at what they were sold at —
+            # see edit_sale_from_items). Without it the edit silently
+            # re-priced old lines at TODAY'S catalog price after any
+            # price update: the phone showed one total, the server
+            # saved another, and cash approvals could be rejected with
+            # "المدفوع أقل من الإجمالي". No create path sends this key,
+            # so selling prices stay catalog-driven.
+            if it.get("unit_price") is not None:
+                try:
+                    up = float(it["unit_price"])
+                except (TypeError, ValueError):
+                    raise ValueError("سعر بيع غير صالح للدواء %s" % drug.get("trade_en", ""))
+            else:
+                up = unit_price(drug, it["pack_level"])
             if up < 0 or not math.isfinite(up):
                 raise ValueError("سعر بيع غير صالح للدواء %s" % drug.get("trade_en", ""))
             qty_units = units_for_qty(drug, it["pack_level"], qty_disp)
@@ -1891,6 +1906,19 @@ class DB:
         unknown unit raises instead of silently becoming a box."""
         if not isinstance(items_spec, list):
             raise ValueError("بيانات أصناف غير صالحة")
+        # v6.16: prices of lines ALREADY on the invoice, so an edit
+        # keeps what the phone screen shows (the invoice's saved
+        # prices) instead of silently re-pricing at today's catalog.
+        # Split FEFO rows of one line share one price; last wins is
+        # fine. A missing invoice yields an empty map and edit_sale()
+        # itself raises "الفاتورة غير موجودة".
+        saved_price = {}
+        try:
+            for _r in self.get_sale_items(sale_id):
+                saved_price[(int(_r["drug_id"]),
+                             str(_r["pack_level"] or "box"))] = float(_r["unit_price"] or 0)
+        except Exception:
+            saved_price = {}
         items = []
         for spec in items_spec:
             if not isinstance(spec, dict):
@@ -1913,6 +1941,12 @@ class DB:
             if qty <= 0:
                 continue
             spec_item = {"drug": drug, "pack_level": unit, "qty_display": qty}
+            # v6.16: a line that was already on the invoice keeps the
+            # price it was sold at; only genuinely NEW lines get
+            # today's catalog price.
+            _saved = saved_price.get((drug_id, unit))
+            if _saved is not None:
+                spec_item["unit_price"] = _saved
             # v6.8: honour the explicit per-line discount (TOTAL for the
             # line) exactly like create_sale_from_items() does. It used
             # to be dropped here, so every phone edit silently re-priced

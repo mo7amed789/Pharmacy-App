@@ -42,3 +42,5 @@ catalog/eg_drugs_source.csv
 
 # --- cloud sync: real Supabase credentials never committed ---
 supabase_config.json
+tests/srv616/
+tests/srv_repro/
