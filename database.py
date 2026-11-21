@@ -1703,7 +1703,9 @@ class DB:
         history is never retroactively changed. return_shift_id=None
         means "same shift as the sale" (old callers, backfill-compatible).
         Raises ValueError on an unknown sale / already-returned sale /
-        unknown returning shift."""
+        unknown returning shift. Writes sale_returns + audit_log in the
+        same atomic transaction (v6.19 — every void is logged, from the
+        PC dialog, the invoices list, or the mobile delete button)."""
         c = self.conn.cursor()
         sale = c.execute("SELECT * FROM sales WHERE id=?", (sale_id,)).fetchone()
         if not sale or sale["status"] != "completed":
@@ -1750,6 +1752,12 @@ class DB:
             (sale_id, sale["invoice_no"], return_shift_id, user, _now(),
              refund_method or sale["payment_method"],
              _cash_refund(sale), reason or ""))
+        # v6.19: every void is audit-logged inside the SAME transaction
+        # (PC dialog, invoices list, mobile delete button — all callers).
+        c.execute(
+            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
+            (user or "", "return_sale",
+             sale["invoice_no"] + ((" — " + reason) if reason else ""), _now()))
         self.conn.commit()
 
     def sale_returns_for_shift(self, shift_id):

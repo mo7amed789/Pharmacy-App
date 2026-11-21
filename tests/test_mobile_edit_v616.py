@@ -167,7 +167,8 @@ check("deleted grouped line restocked BOTH batches (+50 net of edit C's -10)",
 # ---- Test 5: service worker can no longer pin a stale page ----
 sw = open(os.path.join(SRC, "sw.js"), encoding="utf-8").read()
 check("sw.js cache name carries the app version (not the fixed v1)",
-      "pharmacy-mobile-v1'" not in sw and "pharmacy-mobile-v616" in sw)
+      "pharmacy-mobile-v1'" not in sw
+      and __import__("re").search(r"pharmacy-mobile-v\d+", sw) is not None)
 fetch_pos = sw.find("fetch(e.request)")
 cache_pos = sw.find("caches.match(e.request")
 check("sw.js fetch handler is network-first (fetch before caches.match)",

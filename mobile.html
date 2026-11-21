@@ -213,10 +213,14 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
       <label class="f">طريقة الدفع</label><select id="histPayMethod"><option value="cash">💵 نقدي</option><option value="card">💳 كارت</option><option value="credit">📒 آجل</option></select>
       <p id="histDiff" style="font-weight:700"></p>
       <div id="histMsg" class="msg"></div>
-      <div id="histConfirm" class="box warn hidden"><b>راجع التعديلات قبل الاعتماد</b><div id="histSummary" style="white-space:pre-line;margin:8px 0;line-height:1.8"></div><p class="muted" style="margin:0 0 6px">بعد الاعتماد فقط يُحذف ما حُذف — قبل ذلك لم يتغيّر شيء.</p><div class="row"><button class="btn" id="histOk" onclick="doHistSave()">✅ تأكيد الاعتماد</button><button class="btn gray" onclick="$('histConfirm').classList.add('hidden')">رجوع</button></div></div>
       <button class="btn" onclick="saveHistoryEdit()">✅ اعتماد التعديلات</button>
+      <button class="btn red" onclick="askVoidInvoice()">🗑️ حذف الفاتورة</button>
       <button class="btn gray" onclick="closeHistDetail()">إغلاق بدون اعتماد</button>
     </div>
+    <!-- v6.19: the confirm box lives OUTSIDE the detail card so the new
+         per-row حذف button in the list can show it without opening the
+         invoice first. -->
+    <div id="histConfirm" class="box warn hidden"><b>راجع قبل الاعتماد</b><div id="histSummary" style="white-space:pre-line;margin:8px 0;line-height:1.8"></div><p class="muted" style="margin:0 0 6px">بعد الاعتماد فقط يُحذف ما حُذف — قبل ذلك لم يتغيّر شيء.</p><div class="row"><button class="btn" id="histOk" onclick="doHistSave()">✅ تأكيد الاعتماد</button><button class="btn gray" onclick="$('histConfirm').classList.add('hidden')">رجوع</button></div></div>
   </div>
 
   <section id="successScreen" class="card hidden"><div class="ok-s">
@@ -663,7 +667,7 @@ async function loadMyInvoices(){
       b.appendChild(d)});
   }catch(e){if(!quiet(e))b.innerHTML='<p class="muted">تعذّر تحميل الفواتير.</p>'}
 }
-let hCart=[],hId=null,hCust=null,hOld=0,hPay='cash',hOrig='[]',hOrigDisc=0,hOrigPaid=0,hOrigPay='cash',hPaidTouched=false;
+let hCart=[],hId=null,hCust=null,hOld=0,hPay='cash',hOrig='[]',hOrigDisc=0,hOrigPaid=0,hOrigPay='cash',hPaidTouched=false,hInvNo='';
 async function loadHistory(){
   const b=$('historyList'),q=$('histSearch').value.trim(),d=$('histDate').value;
   let u='/api/invoices?history=1';if(q)u+='&q='+encodeURIComponent(q);if(d)u+='&date_from='+d+'&date_to='+d;
@@ -673,7 +677,17 @@ async function loadHistory(){
     b.innerHTML='';
     rows.forEach(i=>{const e=document.createElement('div');e.className='inv';
       e.innerHTML='<span class="a ltr">'+esc(i.invoice_no)+'</span><span class="c ltr">'+f2(i.total)+' ج.م</span><span class="b">'+esc((i.created_at||i.date||'').replace('T',' '))+'</span><span class="b">'+(i.source==='mobile'?'📱':'🖥️')+(i.edited_at?' ✏️':'')+' '+(i.printed_at?'🖨️':'⏳')+'</span>';
-      const bt=document.createElement('button');bt.className='btn sec';bt.style.cssText='grid-column:1/-1;padding:8px;margin:4px 0 0';bt.textContent='عرض وتعديل';bt.addEventListener('click',()=>openHist(i.id));e.appendChild(bt);b.appendChild(e)});
+      // v6.19: a direct حذف button per invoice — same confirm box and
+      // same PIN-protected /return endpoint as the all-lines-held flow.
+      if(i.status==='completed'){
+        const rw=document.createElement('div');rw.style.cssText='grid-column:1/-1;display:flex;gap:6px;margin-top:4px';
+        const bt=document.createElement('button');bt.className='btn sec';bt.style.cssText='flex:2;padding:8px;margin:0';bt.textContent='عرض وتعديل';bt.addEventListener('click',()=>openHist(i.id));rw.appendChild(bt);
+        const del=document.createElement('button');del.className='btn red';del.style.cssText='flex:1;padding:8px;margin:0';del.textContent='🗑️ حذف';del.addEventListener('click',()=>askVoidInvoice(i.id,i.invoice_no));rw.appendChild(del);
+        e.appendChild(rw);
+      }else{
+        const st=document.createElement('div');st.style.cssText='grid-column:1/-1;color:var(--err);font-weight:700;font-size:13px;margin-top:4px';st.textContent='مُرجعة ↩️ — رجعت كمياتها للمخزون';e.appendChild(st);
+      }
+      b.appendChild(e)});
   }catch(e){if(!quiet(e))b.innerHTML='<p class="muted">تعذّر تحميل السجل.</p>'}
 }
 function setHistPay(v){hPay=v;$('histPayMethod').value=v}
@@ -683,7 +697,7 @@ async function openHist(id){
     const r=await api('/api/invoice/'+id);chk(r);const inv=(await r.json()).invoice;
     if(!inv){showMsg('الفاتورة غير موجودة.');return}
     if(inv.status!=='completed'){showMsg('لا يمكن تعديل فاتورة مُرجعة.');return}
-    hId=inv.id;hCust=inv.customer_id||null;hOld=Number(inv.total);setHistPay(inv.payment_method||'cash');
+    hId=inv.id;hInvNo=inv.invoice_no;hCust=inv.customer_id||null;hOld=Number(inv.total);setHistPay(inv.payment_method||'cash');
     hCart=(inv.items||[]).map(it=>({drug_id:it.drug_id,name:it.trade_en||it.trade_ar||'',unit:it.pack_level||'box',qty:Number(it.qty_display),unit_price:Number(it.unit_price),held:false,isNew:false,disc:Number(it.line_discount||0)}));
     hOrig=JSON.stringify(hCart.map(c=>({drug_id:c.drug_id,unit:c.unit,qty:c.qty})));
     hOrigDisc=Number(inv.discount||0);hOrigPaid=Number(inv.paid == null ? inv.total : inv.paid);hOrigPay=hPay;
@@ -737,6 +751,17 @@ async function histSearchAdd(){
 }
 function hMsg(t,k){const m=$('histMsg');m.textContent=t;m.className='msg '+(k||'err');m.scrollIntoView({block:'center'})}
 let pendingEdit=null,hSaving=false;
+// v6.19: direct delete — from the per-row 🗑️ in the list (id+no given)
+// or from the 🗑️ inside the open invoice (no args = current invoice).
+// Same confirm box and same POST /return as the all-lines-held flow.
+function askVoidInvoice(id,no){
+  const vid=id||hId;if(!vid||hSaving)return;
+  const vno=no||hInvNo||'';
+  pendingEdit={id:vid,voidAll:true,fromList:!!id};
+  $('histSummary').textContent='⚠️ حذف الفاتورة '+vno+' = إلغاؤها بالكامل.\nكل الكميات ترجع للمخزون، وأي دين آجل على الفاتورة يتلغى، وحالتها تصبح «مُرجعة».\nلا يمكن التراجع عن الإلغاء.';
+  $('histOk').textContent='🗑️ تأكيد إلغاء الفاتورة';
+  const c=$('histConfirm');c.classList.remove('hidden');c.scrollIntoView({block:'center'});
+}
 function saveHistoryEdit(){
   if(!hId||hSaving)return;
   $('histMsg').className='msg';
@@ -782,19 +807,24 @@ function saveHistoryEdit(){
 async function doHistSave(){
   if(!pendingEdit||hSaving)return;
   hSaving=true;const btn=$('histOk');btn.textContent='جارٍ الحفظ…';btn.disabled=true;
-  const voidAll=!!pendingEdit.voidAll;
+  const voidAll=!!pendingEdit.voidAll,fromList=!!pendingEdit.fromList;
   try{
     const r=await api('/api/invoices/'+pendingEdit.id+(voidAll?'/return':'/edit'),
       voidAll?{method:'POST'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pendingEdit.body)});
     chk(r);let d={};try{d=await r.json()}catch(e){}
-    if(!r.ok){$('histConfirm').classList.add('hidden');hMsg((d&&d.error)||(voidAll?'تعذّر إلغاء الفاتورة (رمز ':'تعذّر حفظ التعديل (رمز ')+r.status+').');return}
-    pendingEdit=null;showToast(voidAll?'أُلغيت الفاتورة (إرجاع كامل)':'تم التعديل — الجديد: '+f2(d.new_total)+' ج.م');closeHistDetail(true);loadHistory();pollLive();
-  }catch(e){if(!quiet(e)){$('histConfirm').classList.add('hidden');hMsg('تعذّر الاتصال بالكمبيوتر.')}}
+    if(!r.ok){$('histConfirm').classList.add('hidden');(fromList?showMsg:hMsg)((d&&d.error)||(voidAll?'تعذّر إلغاء الفاتورة (رمز ':'تعذّر حفظ التعديل (رمز ')+r.status+').');return}
+    const vid=pendingEdit.id;
+    pendingEdit=null;showToast(voidAll?'أُلغيت الفاتورة (إرجاع كامل)':'تم التعديل — الجديد: '+f2(d.new_total)+' ج.م');
+    // deleting from the list while ANOTHER invoice is open keeps that
+    // invoice's unstaged edits — only hide the confirm box there.
+    if(!fromList||hId===vid)closeHistDetail(true);else $('histConfirm').classList.add('hidden');
+    loadHistory();pollLive();
+  }catch(e){if(!quiet(e)){$('histConfirm').classList.add('hidden');(fromList?showMsg:hMsg)('تعذّر الاتصال بالكمبيوتر.')}}
   finally{hSaving=false;btn.textContent='✅ تأكيد الاعتماد';btn.disabled=false}
 }
 function closeHistDetail(force){
   if(!force&&hCart.some(c=>c.held)&&!confirm('فيه أصناف محذوفة مؤقتاً لم تُعتمد — الإغلاق يلغي الحذف نهائياً؟'))return;
-  $('histDetail').classList.add('hidden');$('histConfirm').classList.add('hidden');$('histMsg').className='msg';pendingEdit=null;hId=null;hCust=null;hCart=[];hOrig='[]';
+  $('histDetail').classList.add('hidden');$('histConfirm').classList.add('hidden');$('histMsg').className='msg';pendingEdit=null;hId=null;hInvNo='';hCust=null;hCart=[];hOrig='[]';
 }
 $('histSearch').addEventListener('input',()=>{clearTimeout(window._ht);window._ht=setTimeout(loadHistory,400)});
 $('histDiscount').addEventListener('input',renderHist);
