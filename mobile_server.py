@@ -58,6 +58,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import ssl
@@ -493,6 +494,7 @@ def regenerate_cert(ips, base_dir):
 class _ReuseServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = 64  # Burst of phone polls/saves must not overflow the default backlog.
 
 
 # ---------------------------------------------------------------------------
@@ -808,6 +810,8 @@ def _make_handler(db_path, req_log=None):
             covers error responses and the stdlib server's less common
             routes, not only the happy-path JSON helpers.
             """
+            if urlparse(self.path).path.startswith("/api/"):
+                self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
@@ -899,7 +903,111 @@ def _make_handler(db_path, req_log=None):
             self.end_headers()
             self.wfile.write(body_bytes)
 
+        _SESSIONS = {}
+        _SESSIONS_LOCK = threading.Lock()
+
+        def _session_user(self):
+            token = self.headers.get("Authorization", "")
+            if not isinstance(self.connection, ssl.SSLSocket) and self._client_ip() not in ("127.0.0.1", "::1"):
+                return None
+            if not token.startswith("Bearer "):
+                return None
+            digest = hashlib.sha256(token[7:].encode()).hexdigest()
+            with Handler._SESSIONS_LOCK:
+                rec = Handler._SESSIONS.get(digest)
+            if not rec or rec["expires"] <= time.time():
+                return None
+            db = self._db()
+            try:
+                row = db.conn.execute("SELECT * FROM users WHERE id=?", (rec["id"],)).fetchone()
+                if not row or row["password_hash"] != rec["password_hash"]:
+                    return None
+                return dict(row)
+            finally:
+                db.close()
+
+        def _can_access_sale(self, db, sid):
+            sale = db.get_sale(sid)
+            if not sale:
+                self._send_json(404, {"error": "الفاتورة غير موجودة"})
+                return False
+            user = getattr(self, "employee", None)
+            # Legacy PIN may only access old shared-mobile / desktop rows.
+            # It must never bypass the privacy boundary for employee sales.
+            allowed = (user and (user["role"] == "admin" or sale["cashier"] == user["username"]))
+            if not user:
+                allowed = sale["cashier"] == "mobile" or sale.get("source") != "mobile"
+            if not allowed:
+                self._send_json(403, {"error": "هذه الفاتورة تخص موظفاً آخر"})
+                return False
+            return True
+
+        def _api_login(self):
+            if not isinstance(self.connection, ssl.SSLSocket) and self._client_ip() not in ("127.0.0.1", "::1"):
+                self._send_json(403, {"error": "دخول الموظفين يحتاج رابط HTTPS على بورت 8443"})
+                return
+            if self._pin_locked():
+                self._send_json(429, {"error": "انتظر دقيقة قبل إعادة الدخول"})
+                return
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                if not 0 < n <= 4096:
+                    raise ValueError()
+                data = json.loads(self.rfile.read(n).decode())
+                username, password = data.get("username"), data.get("password")
+                if not isinstance(username, str) or not isinstance(password, str):
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError):
+                self._send_json(400, {"error": "بيانات الدخول غير صالحة"})
+                return
+            db = self._db()
+            try:
+                user = db.authenticate(username, password)
+                if user:
+                    user = dict(db.conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone())
+                if user and db.is_default_password(user["username"]):
+                    self._send_json(403, {"error": "غيّر كلمة المرور الافتراضية من الكمبيوتر أولاً"})
+                    return
+            finally:
+                db.close()
+            if user and user["username"].lower() == "mobile":
+                self._send_json(403, {"error": "الاسم mobile محجوز للدخول المشترك، أنشئ حساباً آخر"})
+                return
+            if not user:
+                self._pin_failed()
+                self._send_json(401, {"error": "اسم المستخدم أو كلمة المرور غير صحيحة"})
+                return
+            self._pin_succeeded()
+            token = secrets.token_urlsafe(32)
+            digest = hashlib.sha256(token.encode()).hexdigest()
+            with Handler._SESSIONS_LOCK:
+                now = time.time()
+                Handler._SESSIONS = {k:v for k,v in Handler._SESSIONS.items() if v["expires"] > now}
+                Handler._SESSIONS[digest] = {"id": user["id"], "password_hash": user["password_hash"], "expires": now + 12*3600}
+            self._send_json(200, {"token": token, "username": user["username"], "full_name": user["full_name"], "expires_in": 43200})
+
+        def _api_logout(self):
+            token = self.headers.get("Authorization", "")
+            if token.startswith("Bearer "):
+                with Handler._SESSIONS_LOCK:
+                    Handler._SESSIONS.pop(hashlib.sha256(token[7:].encode()).hexdigest(), None)
+            self._send_json(200, {"ok": True})
+
         def _require_pin(self):
+            self.employee = self._session_user()
+            if self.employee:
+                return True
+            if self.headers.get("Authorization"):
+                self._send_json(401, {"error": "انتهت الجلسة، سجل الدخول مجدداً"})
+                return False
+            db = self._db()
+            try:
+                legacy_enabled = db.get_setting("mobile_shared_pin_enabled", "1") == "1"
+            finally:
+                db.close()
+            if not legacy_enabled:
+                self._send_json(401, {"error": "الدخول المشترك مغلق، استخدم حساب الموظف"})
+                return False
             # v5.7 (C9): the lock used to count EVERY unauthenticated
             # hit — 5 probes with no PIN at all locked the IP, and the
             # CORRECT pin was then rejected for 60s. Now: (a) a correct
@@ -1013,7 +1121,11 @@ def _make_handler(db_path, req_log=None):
             parsed = urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
             try:
-                if path == "/api/invoices":
+                if path == "/api/login":
+                    self._api_login()
+                elif path == "/api/logout":
+                    self._api_logout()
+                elif path == "/api/invoices":
                     self._api_create_invoice()
                 elif path == "/api/drugs":
                     self._api_create_drug()
@@ -1154,6 +1266,9 @@ def _make_handler(db_path, req_log=None):
                 return
             try:
                 import supabase_client
+                if self.employee:
+                    self._send_json(200, {"url": "", "key": ""})
+                    return
                 url, key = supabase_client.load_config()
             except Exception:
                 url, key = None, None
@@ -1364,7 +1479,19 @@ def _make_handler(db_path, req_log=None):
             status = (qs.get("status", [""])[0] or "")
             db = self._db()
             try:
-                if status == "pending_print":
+                user = getattr(self, "employee", None)
+                if user and user["role"] != "admin":
+                    rows = [dict(r) for r in db.conn.execute(
+                        "SELECT * FROM sales WHERE cashier=? ORDER BY id DESC", (user["username"],)).fetchall()]
+                    df = qs.get("date_from", [""])[0]
+                    dt = qs.get("date_to", [""])[0]
+                    q = qs.get("q", [""])[0].strip().lower()
+                    rows = [r for r in rows if (not df or r["date"] >= df) and (not dt or r["date"] <= dt)
+                            and (not q or q in r["invoice_no"].lower())]
+                    if status == "pending_print":
+                        rows = [r for r in rows if r["source"] == "mobile" and r["status"] == "completed" and not r["printed_at"]]
+                    rows = rows[:200]
+                elif status == "pending_print":
                     rows = db.pending_phone_invoices()
                 elif qs.get("history", [""])[0] == "1":
                     # v5.5: full invoice history — PC + phone, newest
@@ -1391,6 +1518,8 @@ def _make_handler(db_path, req_log=None):
                     rows = db.sales_on()
             finally:
                 db.close()
+            if not getattr(self, "employee", None):
+                rows = [r for r in rows if r["cashier"] == "mobile" or r.get("source") != "mobile"]
             self._send_json(200, {"invoices": rows})
 
         def _api_invoice_detail(self, sale_id):
@@ -1404,6 +1533,8 @@ def _make_handler(db_path, req_log=None):
                 return
             db = self._db()
             try:
+                if not self._can_access_sale(db, sid):
+                    return
                 detail = db.sale_detail(sid)
             finally:
                 db.close()
@@ -1432,7 +1563,9 @@ def _make_handler(db_path, req_log=None):
             with WRITE_LOCK:
                 db = self._db()
                 try:
-                    db.return_sale(sid, "mobile",
+                    if not self._can_access_sale(db, sid):
+                        return
+                    db.return_sale(sid, self.employee["username"] if self.employee else "mobile",
                                    reason="إلغاء كامل من الموبايل")
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})
@@ -1479,6 +1612,8 @@ def _make_handler(db_path, req_log=None):
             # added lines do not need the deletion approval.
             _db0 = self._db()
             try:
+                if not self._can_access_sale(_db0, sid):
+                    return
                 _detail = _db0.sale_detail(sid)
             finally:
                 _db0.close()
@@ -1537,8 +1672,10 @@ def _make_handler(db_path, req_log=None):
             with WRITE_LOCK:
                 db = self._db()
                 try:
+                    if not self._can_access_sale(db, sid):
+                        return
                     res = db.edit_sale_from_items(
-                        sid, "mobile", items, discount=discount,
+                        sid, self.employee["username"] if self.employee else "mobile", items, discount=discount,
                         payment_method=payment, customer_id=customer_id,
                         paid=paid)
                 except ValueError as e:
@@ -1605,25 +1742,32 @@ def _make_handler(db_path, req_log=None):
             # invoice; if the phone retries after a disconnect, the
             # SAME sale is returned instead of selling twice.
             client_ref = str(data.get("client_ref") or "")[:64]
+            if self.employee and client_ref:
+                client_ref = "u%d:%s" % (self.employee["id"], hashlib.sha256(client_ref.encode()).hexdigest()[:48])
             # Serialise writes: two phones must never sell the same
             # last box twice.
             with WRITE_LOCK:
                 db = self._db()
                 try:
                     # STEP2 (2A): bind the mobile sale to the current
-                    # ACTIVE shift when one is open (any cashier's —
-                    # the phone has no cashier of its own). When no
+                    # employee's own open shift, or the legacy shared
+                    # active shift for shared-PIN phones. When no
                     # shift is open the sale keeps shift_id=None and
                     # shows up in the "مبيعات بدون وردية" line of the
                     # next shift reconciliation instead of vanishing.
+                    cashier = self.employee["username"] if self.employee else "mobile"
+                    existing = db.conn.execute("SELECT cashier FROM sales WHERE client_ref=?", (client_ref,)).fetchone() if client_ref else None
+                    if existing and existing["cashier"] != cashier:
+                        self._send_json(403, {"error": "مرجع الفاتورة يخص موظفاً آخر"})
+                        return
                     sale_id, invoice_no, total, change = db.create_sale_from_items(
-                        cashier="mobile", items_spec=items,
+                        cashier=self.employee["username"] if self.employee else "mobile", items_spec=items,
                         discount=discount,
                         payment_method=payment, customer_id=customer_id,
-                        paid=paid, shift_id=db.active_shift_id(),
+                        paid=paid, shift_id=(db.open_shift_for(self.employee["username"]) or {}).get("id") if self.employee else db.active_shift_id(),
                         source="mobile", client_ref=client_ref)
                     if note:
-                        db.audit("mobile", "mobile_invoice_note",
+                        db.audit(self.employee["username"] if self.employee else "mobile", "mobile_invoice_note",
                                  "%s: %s" % (invoice_no, note[:200]))
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})

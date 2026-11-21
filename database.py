@@ -914,6 +914,8 @@ class DB:
         """Create a user with a PBKDF2 hash (v5.0). Raises on duplicate."""
         if not (username or "").strip():
             raise ValueError("اسم المستخدم مطلوب")
+        if username.strip().lower() == "mobile":
+            raise ValueError("الاسم mobile محجوز للدخول المشترك")
         if not password or len(password) < 8:
             raise ValueError("كلمة المرور يجب أن تكون 8 أحرف على الأقل")
         if role not in ("admin", "cashier"):
@@ -2485,6 +2487,29 @@ class DB:
         return [dict(r) for r in rows]
 
     # ---------- reports ----------
+    def report_employee_sales(self, date_from, date_to):
+        """Current invoice-cohort report, by original sale date/cashier.
+        Returned invoices are excluded from eligible completed sales.
+        Not a historical payout ledger: edits/returns can change totals.
+        """
+        date_from, date_to = _validate_day(date_from), _validate_day(date_to)
+        if date_from > date_to:
+            raise ValueError("تاريخ البداية بعد النهاية")
+        rows = self.conn.execute("""
+            SELECT s.cashier AS employee, COALESCE(u.full_name,'') AS full_name,
+              COUNT(*) AS invoice_count,
+              SUM(CASE WHEN s.status='completed' THEN 1 ELSE 0 END) AS completed_count,
+              SUM(CASE WHEN s.status='returned' THEN 1 ELSE 0 END) AS returned_count,
+              ROUND(SUM(CASE WHEN s.status='completed' THEN s.total ELSE 0 END),2) AS completed_sales,
+              ROUND(SUM(CASE WHEN s.status='returned' THEN s.total ELSE 0 END),2) AS returned_sales,
+              ROUND(SUM(CASE WHEN s.status='completed' AND s.source='mobile' THEN s.total ELSE 0 END),2) AS mobile_sales,
+              SUM(CASE WHEN s.source='mobile' THEN 1 ELSE 0 END) AS mobile_count
+            FROM sales s LEFT JOIN users u ON u.username=s.cashier
+            WHERE s.date>=? AND s.date<=?
+            GROUP BY s.cashier ORDER BY s.cashier
+        """, (date_from, date_to)).fetchall()
+        return [dict(r) for r in rows]
+
     def report_daily(self, day=None):
         day = _validate_day(day) if day else _today()
         sales = self.conn.execute(

@@ -183,7 +183,16 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
   <div id="toast" class="toast hidden"></div>
 
   <section id="pinScreen" class="card" style="margin-top:20px">
-    <h2>🔐 الرمز (PIN)</h2>
+    <h2>🔐 دخول الموظف</h2>
+    <p class="muted">استخدم رابط HTTPS (8443) وحسابك الموجود في برنامج الكمبيوتر. الجلسة 12 ساعة وتنتهي بإعادة تشغيل السيرفر أو تغيير كلمة المرور.</p>
+    <form onsubmit="employeeLogin();return false">
+      <label for="employeeName">اسم المستخدم</label>
+      <input id="employeeName" autocomplete="username" class="ltr" required maxlength="100">
+      <label for="employeePassword">كلمة المرور</label>
+      <input id="employeePassword" type="password" autocomplete="current-password" required maxlength="256">
+      <button class="btn" id="employeeLoginBtn" type="submit">دخول بحساب الموظف</button>
+    </form>
+    <hr><h3>دخول مشترك قديم (بلا اسم موظف)</h3>
     <p class="muted">اكتب الرمز المكوّن من 6 أرقام من تبويب الموبايل في برنامج الكمبيوتر.</p>
     <form id="pinForm" autocomplete="on" onsubmit="savePin();return false">
       <input type="text" name="username" value="pharmacy" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;opacity:0;height:0;width:0;padding:0;border:0;margin:0">
@@ -194,6 +203,7 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
     </form>
   </section>
 
+  <div id="employeeBar" class="box hidden"><span id="employeeLabel"></span> <button class="btn sec" onclick="employeeLogout()">خروج / تبديل الموظف</button></div>
   <div id="invView" class="hidden">
     <div class="card">
       <h2>🔎 بحث عن دواء</h2>
@@ -333,13 +343,34 @@ const boxOnly=d=>{const f=(d&&d.form)||'';return BOX_EN.test(f)||BOX_AR.test(f)}
   try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}})();
 let PIN=sessionStorage.getItem('pe_pin')||localStorage.getItem('pe_pin')||'';
 if(PIN)sessionStorage.setItem('pe_pin',PIN);
+let employeeToken=sessionStorage.getItem('pe_employee_token')||'',employeeName=sessionStorage.getItem('pe_employee_name')||'';
 let cart=[],payment='cash',clientRef='',view='inv';
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
 
 function showMsg(t,k){const m=$('msg');m.textContent=t;m.className='msg '+(k||'err');scrollTo(0,0)}
 function hideMsg(){$('msg').className='msg';$('msg').textContent=''}
 function showToast(t){const e=$('toast');e.textContent=t;e.classList.remove('hidden');clearTimeout(showToast.t);showToast.t=setTimeout(()=>e.classList.add('hidden'),3000)}
-function api(p,o){o=o||{};o.headers=Object.assign({},o.headers||{},{'X-Mobile-PIN':PIN});return fetch(p,o)}
+function api(p,o){o=o||{};o.headers=Object.assign({},o.headers||{},employeeToken?{'Authorization':'Bearer '+employeeToken}:{'X-Mobile-PIN':PIN});return fetch(p,o)}
+async function employeeLogin(){
+  if(!window.isSecureContext){showMsg('افتح رابط HTTPS على بورت 8443 قبل إدخال كلمة مرور الموظف.');return}
+  if(cart.length&&!confirm('سيتم مسح الروشتة غير المحفوظة عند تبديل الحساب. متابعة؟'))return;
+  const b=$('employeeLoginBtn');b.disabled=true;
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('employeeName').value.trim(),password:$('employeePassword').value})});
+    const d=await r.json();$('employeePassword').value='';
+    if(!r.ok){showMsg(d.error||'تعذر الدخول');return}
+    employeeToken=d.token;employeeName=d.full_name||d.username;
+    sessionStorage.setItem('pe_employee_token',employeeToken);sessionStorage.setItem('pe_employee_name',employeeName);
+    PIN='';sessionStorage.removeItem('pe_pin');localStorage.removeItem('pe_pin');
+    cart=[];clientRef='';renderCart();hideMsg();await enterApp();
+  }catch(e){showMsg('تعذر الاتصال بالكمبيوتر')}finally{b.disabled=false}
+}
+async function employeeLogout(){
+  if(cart.length&&!confirm('سيتم مسح الروشتة غير المحفوظة. خروج؟'))return;
+  try{await api('/api/logout',{method:'POST'})}catch(e){}
+  employeeToken='';employeeName='';cart=[];clientRef='';renderCart();askPin();
+}
+
 function chk(r){if(r.status===401){askPin('الرمز غير صحيح.');throw new Error('unauthorized')}if(r.status===429){showMsg('محاولات كثيرة — انتظر دقيقة.');throw new Error('locked')}return r}
 const quiet=e=>e.message==='unauthorized'||e.message==='locked';
 
@@ -489,6 +520,13 @@ function show(v){
   scrollTo(0,0);
 }
 function askPin(m){
+  employeeToken='';employeeName='';
+  sessionStorage.removeItem('pe_employee_token');sessionStorage.removeItem('pe_employee_name');
+  $('employeeBar').classList.add('hidden');
+  cart=[];clientRef='';renderCart();hCart=[];hId=null;pendingEdit=null;
+  $('myInvoices').textContent='';$('historyList').textContent='';
+  $('histDetail').classList.add('hidden');$('histConfirm').classList.add('hidden');
+
   stopLivePoll();try{stopScan()}catch(e){}
   PIN='';sessionStorage.removeItem('pe_pin');localStorage.removeItem('pe_pin');
   ['invView','mineView','histView','bar','successScreen','tabs'].forEach(i=>$(i).classList.add('hidden'));
@@ -505,16 +543,19 @@ function savePin(){
   hideMsg();enterApp();
 }
 async function enterApp(){
+  $('employeeLabel').textContent=employeeToken?'الموظف: '+employeeName:'دخول مشترك، لا يحتسب لموظف';
+  $('employeeBar').classList.remove('hidden');
+
   $('pinScreen').classList.add('hidden');$('tabs').classList.remove('hidden');show('inv');
   const ok=await loadCustomers();
   if(ok===false){askPin('الرمز غير صحيح — أدخل الرمز الحالي من تبويب الموبايل.');return}
   if(ok===null){
     // لا يوجد اتصال بالكمبيوتر: ادخل وضع السحابة إن كان مهيأً
-    if(cloudReady()){enterCloudMode();return}
+    if(!employeeToken&&cloudReady()){enterCloudMode();return}
     showMsg('تعذّر الاتصال بالكمبيوتر — والوضع السحابي غير مهيأ بعد (افتح الصفحة مرة والجهازان على نفس الشبكة).');
     return;
   }
-  loadCloudConfig();
+  if(!employeeToken)loadCloudConfig();
   if(cloudMode)exitCloudMode();
   await doSearch('');updateHttpsBanner();startLivePoll();pollLive();startPcScanPoll();
 }
@@ -903,7 +944,7 @@ async function pollLive(){
 }
 function startLivePoll(){
   if(lt)return;
-  if(!lBound){lBound=true;document.addEventListener('visibilitychange',()=>{if(!document.hidden&&PIN)pollLive()});addEventListener('focus',()=>{if(PIN)pollLive()})}
+  if(!lBound){lBound=true;document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(PIN||employeeToken))pollLive()});addEventListener('focus',()=>{if(PIN||employeeToken)pollLive()})}
   sched(5000);
 }
 
@@ -912,7 +953,7 @@ let pcPendingId=0,pcScanId=null,pcPollT=null;
 function showPcScan(id){pcPendingId=id;$('pcScanBanner').classList.remove('hidden')}
 function hidePcScan(){pcPendingId=0;$('pcScanBanner').classList.add('hidden')}
 async function pollPcScan(){
-  if(!PIN||document.hidden||pcScanId!=null)return;
+  if(!(PIN||employeeToken)||document.hidden||pcScanId!=null)return;
   try{
     const r=await api('/api/scan-request');chk(r);const d=await r.json();
     if(d&&d.pending&&d.id)showPcScan(d.id);else hidePcScan();
@@ -1108,7 +1149,7 @@ const inField=e=>/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||
 ['copy','cut','contextmenu','dragstart'].forEach(t=>document.addEventListener(t,e=>{if(!inField(e))e.preventDefault()}));
 $('pinInput').addEventListener('input',()=>{if(/^\d{6}$/.test($('pinInput').value.trim()))savePin()});
 try{updateHttpsBanner()}catch(e){}
-if(PIN)enterApp();else try{$('pinInput').focus()}catch(e){}
+if(PIN||employeeToken)enterApp();else try{$('employeeName').focus()}catch(e){}
 </script>
 </body>
 </html>

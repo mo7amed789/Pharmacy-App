@@ -21,10 +21,10 @@ js = html[html.index("<script>"):]
 main_src = open(os.path.join(SRC, "main.py"), encoding="utf-8").read()
 
 # ---------- version + cache ----------
-check("window title at v6.27", "Pharmacy Enterprise v6.27" in main_src)
-check("login label at v6.27", "نظام إدارة الصيدلية — v6.27" in main_src)
+check("window title at v6.27", "Pharmacy Enterprise v6.28" in main_src)
+check("login label at v6.27", "نظام إدارة الصيدلية — v6.28" in main_src)
 sw = open(os.path.join(SRC, "sw.js"), encoding="utf-8").read()
-check("service-worker cache bumped to current", "pharmacy-mobile-v627" in sw)
+check("service-worker cache bumped to current", "pharmacy-mobile-v628" in sw)
 
 # ---------- layout structure ----------
 check("grid2 two-column field utility exists",
