@@ -80,7 +80,15 @@ label.f{display:block;font-size:12px;font-weight:700;color:var(--mut);margin:6px
 
 /* ---- البحث ---- */
 .search{position:relative}
-.search input{margin:0;-webkit-appearance:none;appearance:none}
+.search input{margin:0;-webkit-appearance:none;appearance:none;padding-right:58px;text-align:left}
+.search[data-text-dir=rtl] input{padding-right:13px;padding-left:58px;text-align:right}
+.search input::-webkit-search-cancel-button{display:none;-webkit-appearance:none}
+.search-clear{position:absolute;right:5px;left:auto;top:50%;transform:translateY(-50%);width:44px;height:44px;padding:10px;border:1px solid #B7C6C5;border-radius:10px;background:var(--tint2);color:var(--pri-deep);display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation}
+.search[data-text-dir=rtl] .search-clear{left:5px;right:auto}
+.search-clear:hover{background:#D1E7E3;border-color:var(--pri)}
+.search-clear:active{background:#B9DAD3}
+.search-clear[hidden]{display:none}
+.search-clear svg{width:22px;height:22px;pointer-events:none}
 input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search-results-button,input[type=search]::-webkit-search-results-decoration{display:none}
 .search i{position:absolute;inset-inline-start:14px;top:50%;transform:translateY(-50%);font-style:normal;opacity:.5}
 
@@ -207,7 +215,7 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
   <div id="invView" class="hidden">
     <div class="card">
       <h2>🔎 بحث عن دواء</h2>
-      <div class="search"><input id="searchInput" type="search" dir="auto" placeholder="اسم الدواء أو الباركود" autocomplete="off"></div>
+      <div class="search" data-text-dir="rtl"><input id="searchInput" type="search" dir="auto" aria-label="بحث عن دواء أو باركود" placeholder="اسم الدواء أو الباركود" autocomplete="off"><button id="searchClear" class="search-clear" type="button" aria-label="مسح البحث / Clear search" title="مسح البحث / Clear search" aria-controls="searchInput results" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
       <!-- v6.30: visible attribution beside catalog search, offline-safe text. -->
       <details id="catalogSourceNotice" class="box" style="font-size:12px;overflow-wrap:anywhere">
         <summary>مصادر الكتالوج: Open Beauty Facts / Open Products Facts · ODbL 1.0</summary>
@@ -578,16 +586,31 @@ async function loadCustomers(){
 }
 
 /* ---------- search ---------- */
-let st=null;
-$('searchInput').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(()=>doSearch($('searchInput').value),300)});
+let st=null,searchRequest=0;
+function syncSearchClear(){
+  const input=$('searchInput');
+  input.parentElement.dataset.textDir=getComputedStyle(input).direction;
+  $('searchClear').hidden=!input.value;
+}
+$('searchClear').addEventListener('click',()=>{
+  $('searchInput').value='';
+  $('searchInput').dispatchEvent(new Event('input',{bubbles:true}));
+  $('searchInput').focus();
+});
+$('searchInput').addEventListener('input',()=>{
+  syncSearchClear();clearTimeout(st);searchRequest++;
+  if(!$('searchInput').value.trim()){doSearch('');return}
+  st=setTimeout(()=>doSearch($('searchInput').value),300);
+});
 async function doSearch(q){
+  syncSearchClear();const request=++searchRequest;
   if(!(q||'').trim()){$('results').innerHTML='';return}
   if(cloudMode){
-    try{renderResults(await cloudSearch(q))}catch(e){showMsg('تعذّر البحث في السحابة — تحقق من إنترنت الهاتف.')}
+    try{const drugs=await cloudSearch(q);if(request===searchRequest)renderResults(drugs)}catch(e){if(request===searchRequest)showMsg('تعذّر البحث في السحابة — تحقق من إنترنت الهاتف.')}
     return;
   }
-  try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''));chk(r);const d=await r.json();renderResults(d.drugs||[])}
-  catch(e){if(!quiet(e))showMsg('تعذّر البحث.')}
+  try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''));chk(r);const d=await r.json();if(request===searchRequest)renderResults(d.drugs||[])}
+  catch(e){if(request===searchRequest&&!quiet(e))showMsg('تعذّر البحث.')}
 }
 async function searchBarcode(){
   const c=$('searchInput').value.trim();if(!c){showMsg('اكتب رقم الباركود أولاً.');return}
@@ -862,7 +885,7 @@ function onDetected(code){
 }
 async function onScanned(code){
   if(pcScanId!=null){await pcScanDeliver(code);return}
-  $('searchInput').value=code;
+  $('searchInput').value=code;syncSearchClear();
   if(cloudMode){
     try{
       const d=await cloudBarcode(code);
@@ -1161,4 +1184,4 @@ try{updateHttpsBanner()}catch(e){}
 if(PIN||employeeToken)enterApp();else try{$('employeeName').focus()}catch(e){}
 </script>
 </body>
-</html>
+         </html>
