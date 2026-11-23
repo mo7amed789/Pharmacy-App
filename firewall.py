@@ -341,7 +341,7 @@ def _add_single_rule(name, port, profile):
         "advfirewall", "firewall", "add", "rule",
         "name=%s" % name,
         "dir=in", "action=allow", "protocol=TCP",
-        "localport=%d" % port, "profile=%s" % profile,
+        "localport=%d" % port, "profile=%s" % profile, "remoteip=localsubnet",
     ])
     text = (out + " " + err).strip()
     low = text.lower()
@@ -354,6 +354,28 @@ def _denied(text):
     low = (text or "").lower()
     return any(w in low for w in ("access is denied", "denied", "administrator",
                                   "elevation", "0x80070005", "requires elevation"))
+
+
+def restrict_existing_rules():
+    """Narrow only known application rules. Called by the explicit repair action."""
+    if not is_windows():
+        return False, "Windows only"
+    for port in PORTS:
+        names = set(PORT_RULES[port].values())
+        for profile in PROFILES:
+            names.update(LEGACY_NAMES.get(port, {}).get(profile, []))
+        for name in sorted(names):
+            found, _profiles = _rule_info(name, port)
+            if found is None:
+                return False, "Could not inspect existing firewall rules."
+            if not found:
+                continue
+            ok, _out, _err = _run_netsh([
+                "advfirewall", "firewall", "set", "rule", "name=%s" % name,
+                "new", "remoteip=localsubnet"])
+            if not ok:
+                return False, "Could not restrict existing firewall rule; run repair as administrator."
+    return True, "Known app rules restricted to the local subnet."
 
 
 def add_rule():
@@ -371,6 +393,9 @@ def add_rule():
     """
     if not is_windows():
         return False, "إصلاح جدار الحماية يعمل على ويندوز 10 / 11 فقط."
+    narrowed, detail = restrict_existing_rules()
+    if not narrowed:
+        return False, detail
     cov = coverage_all()
     missing = _missing_combos(cov)
     if not missing:
@@ -399,7 +424,7 @@ def add_rule():
                    "من PowerShell كمسؤول:\n"
                    "netsh advfirewall firewall add rule "
                    "name=\"Pharmacy Mobile %d Public\" dir=in action=allow "
-                   "protocol=TCP localport=%d profile=public"
+                   "protocol=TCP localport=%d profile=public remoteip=localsubnet"
                    % (labels, last_err or "خطأ غير معروف من netsh.",
                       missing[0][0], missing[0][0]))
 
