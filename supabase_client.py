@@ -133,7 +133,12 @@ class SupabaseClient:
         query = ("?" + urllib.parse.urlencode(params)) if params else ""
         req = urllib.request.Request(self.url + path + query, method=method)
         req.add_header("apikey", self.key)
-        req.add_header("Authorization", "Bearer " + self.key)
+        # Catalog writes never fall back to the shared public key.
+        bearer = self.key
+        if method in ("POST", "PATCH", "PUT", "DELETE") and path == "/rest/v1/" + TABLE:
+            import catalog_writer
+            bearer = catalog_writer.access_token(self.url)
+        req.add_header("Authorization", "Bearer " + bearer)
         req.add_header("Accept", "application/json")
         if body is not None:
             req.add_header("Content-Type", "application/json")
