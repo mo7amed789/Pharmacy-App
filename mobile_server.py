@@ -1270,6 +1270,8 @@ def _make_handler(db_path, req_log=None):
                     self._send_json(200, {"url": "", "key": ""})
                     return
                 url, key = supabase_client.load_config()
+                if not supabase_client.browser_safe_key(key):
+                    url, key = None, None
             except Exception:
                 url, key = None, None
             self._send_json(200, {"url": url or "", "key": key or ""})
