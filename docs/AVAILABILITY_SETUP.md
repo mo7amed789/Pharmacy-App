@@ -8,6 +8,10 @@ and status. Include that sidecar in a coordinated backup/restore plan. Do not cl
 an installation across branches. A stale/restored sequence fails closed and needs
 operator review, never automatic resets or guessed branch changes.
 
+The standard run.bat launcher now uses availability_launcher.py, an explicit
+subclass extension of the unchanged base app. Running main.py directly still runs
+the base app without the publisher extension. Billing code is unchanged.
+
 Admin Settings opens the availability setup/review window. Use a trusted exported
 array of platform medicine DTOs (id, brandName, strength, dosageForm, barcodes,
 isActive). Load it, inspect exact local/platform product, strength, dosage form,
