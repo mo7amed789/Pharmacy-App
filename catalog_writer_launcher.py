@@ -4,7 +4,7 @@ Run: py catalog_writer_launcher.py. No credential is written to disk.
 """
 import getpass
 import catalog_writer
-import main
+import availability_launcher
 
 
 def run():
@@ -22,7 +22,7 @@ def run():
     finally:
         password = None
     try:
-        main.main()
+        availability_launcher.main()
     finally:
         catalog_writer.sign_out()
 
