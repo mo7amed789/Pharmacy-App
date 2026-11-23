@@ -29,6 +29,14 @@ class SyncTests(unittest.TestCase):
         second=Store(str(Path(self.tmp.name)/'sidecar.db'))
         try:self.assertEqual(p['snapshotId'],__import__('json').loads(second.pending()['payload'])['snapshotId'])
         finally:second.close()
+    def test_pending_snapshot_does_not_bypass_501_limit(self):
+        self.enable();queued=self.store.stage(self.db)
+        with patch('availability_sync.inventory_preview',return_value={'items':[{}]*501,'held':[]}):
+            self.assertIsNone(self.store.stage(self.db))
+        self.assertFalse(self.store.config()['enabled'])
+        self.assertIsNotNone(self.store.pending())
+        self.assertFalse(self.store.send_once(lambda *a:self.fail('501 bindings sent')))
+
     def test_verified_ack_only_clears_queue(self):
         self.enable();p=self.store.stage(self.db)
         self.assertFalse(self.store.send_once(lambda *a:(200,{})));self.assertIsNotNone(self.store.pending())

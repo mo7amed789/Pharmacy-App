@@ -114,12 +114,12 @@ class Store:
             return None
         if not preview['items']:
             return None
-        old=self.pending()
-        if old and time.time()-old['created'] < 14*60:
-            return json.loads(old['payload'])
         if len(preview['items'])>500:
             self.disable('More than 500 bindings; split protocol required')
             return None
+        old=self.pending()
+        if old and time.time()-old['created'] < 14*60:
+            return json.loads(old['payload'])
         with self.conn:
             self.conn.execute('BEGIN IMMEDIATE')
             c=self.config()
