@@ -1,0 +1,2 @@
+# Optional CLI only. The default desktop app remains stdlib-only.
+cryptography==50.0.2
