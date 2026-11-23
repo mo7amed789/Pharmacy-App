@@ -6,7 +6,7 @@ REM falling through to `python` only showed the confusing
 REM "Python was not found / Microsoft Store" message.
 REM Stdlib only — no venv, no pip install needed.
 cd /d "%~dp0"
-py main.py
+py availability_launcher.py
 if errorlevel 1 (
   echo.
   echo حدث خطأ اثناء التشغيل. راجع ملف error.log

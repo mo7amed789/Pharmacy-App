@@ -88,7 +88,9 @@ PRESERVE_FILES = {
 }
 PRESERVE_DIRS = {"backups", "certs", "receipts", ".git", "__pycache__"}
 PRESERVE_PREFIXES = ("pharmacy_",)   # ملفات النسخ الاحتياطية بجانب القاعدة
-PRESERVE_SUFFIXES = (".db", ".db-wal", ".db-shm", ".log", ".pem", ".bak")
+PRESERVE_SUFFIXES = (".db", ".db-wal", ".db-shm", ".log", ".pem", ".bak",
+                     ".availability.sqlite3", ".availability.sqlite3-wal",
+                     ".availability.sqlite3-shm", ".availability.sqlite3.lock")
 
 MAX_CODE_BACKUPS = 3
 
