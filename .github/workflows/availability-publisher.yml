@@ -18,6 +18,8 @@ jobs:
         run: python -m py_compile availability_launcher.py availability_sync.py availability_ui.py main.py
       - name: Synthetic bridge and outbox tests
         run: python -m unittest discover -s tests -p "test_availability*.py" -v
+      - name: Local network firewall scope
+        run: python -m unittest discover -s tests -p "test_firewall_scope.py" -v
       - name: Restricted catalog writer boundary
         run: python -m unittest discover -s tests -p "test_catalog_writer.py" -v
       - name: Browser key security boundary
