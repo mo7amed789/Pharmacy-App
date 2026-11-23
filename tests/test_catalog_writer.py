@@ -53,3 +53,21 @@ class WriterTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class WriterLauncherTests(unittest.TestCase):
+    def test_launcher_preserves_availability_extension_and_clears_session(self):
+        import sys
+        import types
+        fake = types.ModuleType('availability_launcher')
+        fake.main = unittest.mock.Mock()
+        with patch.dict(sys.modules, {'availability_launcher': fake}):
+            import importlib.util
+            from pathlib import Path
+            spec = importlib.util.spec_from_file_location('writer_launcher_test', str(Path(__file__).parents[1] / 'catalog_writer_launcher.py'))
+            launcher = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(launcher)
+            with patch('builtins.input', return_value='owner@example.invalid'), patch('getpass.getpass', return_value='synthetic'), patch('catalog_writer.sign_in') as sign_in, patch('catalog_writer.sign_out') as sign_out:
+                launcher.run()
+                sign_in.assert_called_once()
+                fake.main.assert_called_once()
+                sign_out.assert_called_once()
