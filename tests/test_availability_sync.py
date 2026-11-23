@@ -59,6 +59,10 @@ class SyncTests(unittest.TestCase):
         self.enable();p=self.store.stage(self.db)
         self.assertFalse(self.store.send_once(lambda *a:(200,{'snapshotId':p['snapshotId'],'sequence':p['sequence']+1,'accepted':1})))
         self.assertIsNotNone(self.store.pending())
+    def test_updater_preserves_sidecar_and_lock(self):
+        import updater
+        for suffix in ['', '-wal', '-shm', '.lock']:
+            self.assertTrue(updater._preserved('pharmacy.db.availability.sqlite3'+suffix))
     def test_credentials_not_saved_and_rejection_disables(self):
         self.enable();self.store.stage(self.db);self.store.send_once(lambda *a:(403,{}))
         self.assertFalse(self.store.config()['enabled'])
