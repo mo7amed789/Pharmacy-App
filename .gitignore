@@ -46,3 +46,6 @@ tests/srv616/
 tests/srv_repro/
 tests/srv617/
 tests/srv619/
+
+# Private per-installation availability queue and OS worker lock
+*.availability.sqlite3*
