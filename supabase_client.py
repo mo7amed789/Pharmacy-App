@@ -15,6 +15,7 @@
 """
 
 import json
+import base64
 import os
 import urllib.error
 import urllib.parse
@@ -82,6 +83,26 @@ def load_config(path=None):
     if url and key:
         return url, key
     return None, None
+
+
+def browser_safe_key(key):
+    """Only documented public key forms may leave the desktop for a phone.
+
+    This is classification, not JWT verification or an authorization grant.
+    Public keys remain dangerous when server policies permit public writes.
+    """
+    if not isinstance(key, str):
+        return False
+    if key.startswith('sb_publishable_'):
+        return len(key) > len('sb_publishable_')
+    try:
+        parts = key.split('.')
+        if len(parts) != 3:
+            return False
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + '=' * (-len(parts[1]) % 4)))
+        return payload.get('role') == 'anon'
+    except (ValueError, TypeError, AttributeError, UnicodeError):
+        return False
 
 
 def is_configured(path=None):
