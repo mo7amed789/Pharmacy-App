@@ -141,9 +141,11 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
 #bar .btn{width:auto;flex:none;margin:0;padding:14px 24px;box-shadow:var(--shadow-m)}
 
 /* ---- الماسح ---- */
-#scanArea{margin-top:12px;position:relative}
-#scanVideo{width:100%;max-height:300px;object-fit:cover;border-radius:var(--r-m);background:#0B3B39;display:block;box-shadow:var(--shadow-m)}
-.frame{position:absolute;left:50%;top:calc(50% - 30px);transform:translate(-50%,-50%);width:230px;height:110px;border:3px solid #2DD4BF;border-radius:var(--r-m);pointer-events:none;box-shadow:0 0 0 4px rgba(45,212,191,.20),0 0 24px rgba(45,212,191,.35)}
+#scanArea{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(8,43,42,.88);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.scan-panel{width:min(94vw,720px)}
+.scan-box{position:relative}
+#scanVideo{width:100%;height:min(62vh,520px);object-fit:cover;border-radius:var(--r-l);background:#0B3B39;display:block;box-shadow:var(--shadow-l)}
+.frame{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(70%,340px);height:34%;border:3px solid #2DD4BF;border-radius:var(--r-m);pointer-events:none;box-shadow:0 0 0 4px rgba(45,212,191,.20),0 0 24px rgba(45,212,191,.35)}
 
 /* ---- الفواتير ---- */
 .inv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;padding:12px 2px;border-bottom:1px solid var(--line);font-size:14px}
@@ -166,6 +168,17 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
   main{padding:14px 16px 180px}
   .cols2{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;margin-bottom:10px}
   .cols2>.card{margin-bottom:0}
+}
+
+/* v6.31: شاشة الكمبيوتر — البحث والنتائج يمين، السلة والدفع ثابتان على الجنب */
+@media (min-width:980px){
+  main{max-width:1180px}
+  #bar .in{max-width:1180px}
+  #invView{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr);gap:14px;align-items:start}
+  #invView>.card:first-child{grid-column:1;grid-row:1}
+  #addDrugCard{grid-column:1;grid-row:2}
+  #invView>.cols2{grid-column:2;grid-row:1/span 2;display:block;position:sticky;top:132px}
+  #invView>.cols2>.card{margin-bottom:10px}
 }
 
 @media (hover:hover){.drug,.card{transition:box-shadow .12s ease,border-color .12s ease}}
@@ -216,6 +229,37 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
     <div class="card">
       <h2>🔎 بحث عن دواء</h2>
       <div class="search" data-text-dir="rtl"><input id="searchInput" type="search" dir="auto" aria-label="بحث عن دواء أو باركود" placeholder="اسم الدواء أو الباركود" autocomplete="off"><button id="searchClear" class="search-clear" type="button" aria-label="مسح البحث / Clear search" title="مسح البحث / Clear search" aria-controls="searchInput results" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn blue" id="scanBtn" onclick="startScan()">📷 مسح الباركود</button>
+        <button class="btn" id="photoBtn" style="background:var(--violet)" onclick="$('photoInput').click()">📸 صوّر الباركود</button>
+      </div>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden" onchange="onPhotoPicked(event)">
+      <p id="photoStatus" class="muted"></p>
+      <div id="pcScanBanner" class="box warn hidden">
+        <b>🖥️ الكمبيوتر يطلب مسح باركود</b>
+        <p style="margin:6px 0">نافذة إضافة الدواء على الكمبيوتر تنتظر باركوداً — اضغط «امسح الآن» وصوّر باركود العلبة، وسيصل للكمبيوتر فوراً.</p>
+        <button class="btn blue" onclick="pcScanStart()">📷 امسح الآن للكمبيوتر</button>
+      </div>
+      <div id="scanArea" class="hidden" role="dialog" aria-modal="true" aria-label="مسح الباركود">
+        <div class="scan-panel">
+          <div class="scan-box"><video id="scanVideo" playsinline muted autoplay></video><div class="frame"></div></div>
+          <p id="scanStatus" style="font-weight:700;color:#fff;text-align:center;margin:10px 0">وجّه الكاميرا للباركود</p>
+          <div class="row"><button class="btn gray" id="flashBtn" onclick="toggleFlash()">🔦 الفلاش: مطفي</button><button class="btn red" onclick="stopScan()">⏹ إيقاف</button></div>
+          <p id="flashNote" class="muted hidden" style="color:#BDE6E1"></p>
+        </div>
+      </div>
+      <div id="scanError" class="box err hidden"><b>تعذّر فتح الكاميرا</b><p style="margin:4px 0">اسمح للكاميرا من أيقونة القفل 🔒 في المتصفح ثم أعد المحاولة.</p><p class="ltr muted" id="scanErrName"></p><button class="btn" onclick="startScan()">🔄 إعادة المحاولة</button></div>
+      <div id="unknownBar" class="box warn hidden"><b>⚠️ الباركود غير مضاف</b><p style="margin:4px 0">الباركود <b class="ltr" id="unknownCode"></b> غير مسجل في قاعدة البيانات.</p>
+        <div class="row"><button class="btn" onclick="openAddDrug()">➕ إضافة الدواء</button><button class="btn gray" onclick="$('unknownBar').classList.add('hidden')">إغلاق</button></div></div>
+      <div id="results"></div>
+      <button class="btn sec" onclick="searchBarcode()">🔳 بحث بالباركود المكتوب</button>
+      <div id="httpsBanner" class="box warn hidden">
+        <b>📷 الصفحة مفتوحة على http</b>
+        <p style="margin:6px 0">الكاميرا الحية تحتاج https، لذلك زر «صوّر الباركود» يفتح كاميرا الهاتف ويقرأ الباركود من الصورة — يعمل هنا مباشرة.</p>
+        <button id="secureLinkBtn" class="btn sec hidden" onclick="openSecureScanner()">🔒 افتح المسح الحي الآمن</button>
+        <details><summary style="font-weight:700;cursor:pointer">مسح حي على http؟ (Chrome فقط)</summary>
+        <p style="margin:6px 0">افتح <b class="ltr">chrome://flags/#unsafely-treat-insecure-origin-as-secure</b> ← أضف <b class="ltr" id="httpOrigin"></b> ← فعّلها Enabled ← أعد تشغيل المتصفح.</p></details>
+      </div>
       <!-- v6.30: visible attribution beside catalog search, offline-safe text. -->
       <details id="catalogSourceNotice" class="box" style="font-size:12px;overflow-wrap:anywhere">
         <summary>مصادر الكتالوج: Open Beauty Facts / Open Products Facts · ODbL 1.0</summary>
@@ -225,35 +269,6 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
         <a href="https://us.openproductsfacts.org/data" target="_blank" rel="noopener noreferrer">Open Products Facts</a> ·
         <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener noreferrer">ODbL 1.0</a>
       </details>
-      <div id="httpsBanner" class="box warn hidden">
-        <b>📷 الصفحة مفتوحة على http</b>
-        <p style="margin:6px 0">الكاميرا الحية تحتاج https، لذلك زر «صوّر الباركود» يفتح كاميرا الهاتف ويقرأ الباركود من الصورة — يعمل هنا مباشرة.</p>
-        <button id="secureLinkBtn" class="btn sec hidden" onclick="openSecureScanner()">🔒 افتح المسح الحي الآمن</button>
-        <details><summary style="font-weight:700;cursor:pointer">مسح حي على http؟ (Chrome فقط)</summary>
-        <p style="margin:6px 0">افتح <b class="ltr">chrome://flags/#unsafely-treat-insecure-origin-as-secure</b> ← أضف <b class="ltr" id="httpOrigin"></b> ← فعّلها Enabled ← أعد تشغيل المتصفح.</p></details>
-      </div>
-      <div id="pcScanBanner" class="box warn hidden">
-        <b>🖥️ الكمبيوتر يطلب مسح باركود</b>
-        <p style="margin:6px 0">نافذة إضافة الدواء على الكمبيوتر تنتظر باركوداً — اضغط «امسح الآن» وصوّر باركود العلبة، وسيصل للكمبيوتر فوراً.</p>
-        <button class="btn blue" onclick="pcScanStart()">📷 امسح الآن للكمبيوتر</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="btn blue" id="scanBtn" onclick="startScan()">📷 مسح الباركود</button>
-        <button class="btn" id="photoBtn" style="background:var(--violet)" onclick="$('photoInput').click()">📸 صوّر الباركود</button>
-      </div>
-      <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden" onchange="onPhotoPicked(event)">
-      <p id="photoStatus" class="muted"></p>
-      <div id="scanArea" class="hidden">
-        <video id="scanVideo" playsinline muted autoplay></video><div class="frame"></div>
-        <p id="scanStatus" style="font-weight:700;color:var(--ok);text-align:center;margin:8px 0">وجّه الكاميرا للباركود</p>
-        <div class="row"><button class="btn gray" id="flashBtn" onclick="toggleFlash()">🔦 الفلاش: مطفي</button><button class="btn red" onclick="stopScan()">⏹ إيقاف</button></div>
-        <p id="flashNote" class="muted hidden"></p>
-      </div>
-      <div id="scanError" class="box err hidden"><b>تعذّر فتح الكاميرا</b><p style="margin:4px 0">اسمح للكاميرا من أيقونة القفل 🔒 في المتصفح ثم أعد المحاولة.</p><p class="ltr muted" id="scanErrName"></p><button class="btn" onclick="startScan()">🔄 إعادة المحاولة</button></div>
-      <div id="unknownBar" class="box warn hidden"><b>⚠️ الباركود غير مضاف</b><p style="margin:4px 0">الباركود <b class="ltr" id="unknownCode"></b> غير مسجل في قاعدة البيانات.</p>
-        <div class="row"><button class="btn" onclick="openAddDrug()">➕ إضافة الدواء</button><button class="btn gray" onclick="$('unknownBar').classList.add('hidden')">إغلاق</button></div></div>
-      <div id="results"></div>
-      <button class="btn sec" onclick="searchBarcode()">🔳 بحث بالباركود المكتوب</button>
     </div>
 
     <div id="addDrugCard" class="card hidden">
@@ -877,6 +892,7 @@ function stopScan(){
   try{$('scanVideo').srcObject=null}catch(e){}
   $('scanArea').classList.add('hidden');scanOn=false;flashLbl();
 }
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&scanOn)stopScan()});
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&scanOn)stopScan()});
 function onDetected(code){
   if(!scanOn||!code||Date.now()<cool)return;cool=Date.now()+SCAN_COOLDOWN;stopScan();
@@ -1184,4 +1200,4 @@ try{updateHttpsBanner()}catch(e){}
 if(PIN||employeeToken)enterApp();else try{$('employeeName').focus()}catch(e){}
 </script>
 </body>
-         </html>
+</html>
