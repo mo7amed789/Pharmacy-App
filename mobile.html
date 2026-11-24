@@ -276,6 +276,7 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
       <details id="catalogSourceNotice" class="box" style="font-size:12px;overflow-wrap:anywhere">
         <summary>مصادر الكتالوج: Open Beauty Facts / Open Products Facts · ODbL 1.0</summary>
         <p lang="en" dir="ltr">Contains data from Open Beauty Facts and Open Products Facts, available under the Open Database License (ODbL 1.0).</p>
+        <p lang="en" dir="ltr">US drug listings in the reference catalog come from openFDA (NDC directory), public domain under CC0 1.0 (<a href="https://open.fda.gov/license/" target="_blank" rel="noopener noreferrer">open.fda.gov/license</a>). Not an FDA or EDA endorsement; reference only.</p>
         <p>بيانات تعاونية وليست اعتماداً من GS1 أو هيئة الدواء. توزيع كتالوج مشتق يخضع لنسب المصدر والمشاركة بالمثل. بيانات المخزون والعملاء والمبيعات خاصة وليست جزءاً من كتالوج المرجع.</p>
         <a href="https://world.openbeautyfacts.org/data" target="_blank" rel="noopener noreferrer">Open Beauty Facts</a> ·
         <a href="https://us.openproductsfacts.org/data" target="_blank" rel="noopener noreferrer">Open Products Facts</a> ·
@@ -646,8 +647,8 @@ async function searchRef(q,request){
   if((q||'').trim().length<3){box.innerHTML='';return}
   try{const r=await api('/api/ref-search?q='+encodeURIComponent(q));if(!r.ok)return;const d=await r.json();if(request!==searchRequest)return;
     const a=d.ref||[];if(!a.length){box.innerHTML='';return}
-    box.innerHTML='<details class="box" style="margin-top:8px"><summary><b>كتالوج مرجعي عالمي — للاطلاع فقط، غير متاح للبيع ('+a.length+')</b></summary><p class="muted" style="margin:6px 0">لا يوجد سعر مصري موثّق لهذه المنتجات، ولا يمكن إضافتها للفاتورة.</p>'+
-      a.map(x=>'<div style="padding:6px 0;border-top:1px solid #0001"><b>'+esc(x.name)+'</b><div class="muted">'+esc([x.brand,x.quantity,x.category].filter(Boolean).join(' · '))+'</div><div class="muted ltr">'+esc((x.barcode?x.barcode+' · ':'')+x.source+(x.countries?' · '+x.countries:''))+'</div></div>').join('')+'</details>'}
+    box.innerHTML='<details class="box" style="margin-top:8px"><summary><b>كتالوج مرجعي عالمي — للاطلاع فقط، غير متاح للبيع ('+a.length+')</b></summary><p class="muted" style="margin:6px 0">لا يوجد سعر مصري موثّق لهذه المنتجات، ولا يمكن إضافتها للفاتورة. رقم NDC ليس باركود. بيانات الأدوية الأمريكية من openFDA (CC0) وقد لا تكون مسجّلة أو متاحة في مصر.</p>'+
+      a.map(x=>'<div style="padding:6px 0;border-top:1px solid #0001"><b>'+esc(x.name)+'</b><div class="muted">'+esc([x.brand,x.quantity,x.form,x.category].filter(Boolean).join(' · '))+'</div>'+(x.ingredients?'<div class="muted ltr">'+esc(x.ingredients)+'</div>':'')+(x.pack?'<div class="muted ltr">'+esc(x.pack)+'</div>':'')+'<div class="muted ltr">'+esc((x.barcode?x.barcode+' · ':(x.id_type==='NDC'?'NDC '+x.source_id+' · ':''))+x.source+(x.countries?' · '+x.countries:''))+'</div></div>').join('')+'</details>'}
   catch(e){}
 }
 async function searchBarcode(){
