@@ -140,6 +140,13 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
 #bar .tot b{display:block;font-size:24px;color:var(--ok);line-height:1.2;font-variant-numeric:tabular-nums}
 #bar .btn{width:auto;flex:none;margin:0;padding:14px 24px;box-shadow:var(--shadow-m)}
 
+/* v6.31.1: خانة البحث وأزرار المسح في صف واحد، والنتائج تحتها مباشرة */
+.searchrow{display:flex;gap:8px;align-items:center}
+.searchrow .search{flex:1;min-width:0}
+.searchrow .ibtn{flex:none;width:52px;min-height:52px;margin:0;padding:0;font-size:22px;display:grid;place-items:center}
+#photoStatus:empty{display:none}
+#results{min-height:0}
+
 /* ---- الماسح ---- */
 #scanArea{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(8,43,42,.88);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .scan-panel{width:min(94vw,720px)}
@@ -227,11 +234,10 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
   <div id="employeeBar" class="box hidden"><span id="employeeLabel"></span> <button class="btn sec" onclick="employeeLogout()">خروج / تبديل الموظف</button></div>
   <div id="invView" class="hidden">
     <div class="card">
-      <h2>🔎 بحث عن دواء</h2>
-      <div class="search" data-text-dir="rtl"><input id="searchInput" type="search" dir="auto" aria-label="بحث عن دواء أو باركود" placeholder="اسم الدواء أو الباركود" autocomplete="off"><button id="searchClear" class="search-clear" type="button" aria-label="مسح البحث / Clear search" title="مسح البحث / Clear search" aria-controls="searchInput results" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-      <div class="row" style="margin-top:8px">
-        <button class="btn blue" id="scanBtn" onclick="startScan()">📷 مسح الباركود</button>
-        <button class="btn" id="photoBtn" style="background:var(--violet)" onclick="$('photoInput').click()">📸 صوّر الباركود</button>
+      <div class="searchrow">
+        <div class="search" data-text-dir="rtl"><input id="searchInput" type="search" dir="auto" aria-label="بحث عن دواء أو باركود" placeholder="اسم الدواء أو الباركود" autocomplete="off"><button id="searchClear" class="search-clear" type="button" aria-label="مسح البحث / Clear search" title="مسح البحث / Clear search" aria-controls="searchInput results" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+        <button class="btn blue ibtn" id="scanBtn" type="button" onclick="startScan()" aria-label="مسح الباركود بالكاميرا" title="مسح الباركود">📷</button>
+        <button class="btn ibtn" id="photoBtn" type="button" style="background:var(--violet)" onclick="$('photoInput').click()" aria-label="صوّر الباركود" title="صوّر الباركود">📸</button>
       </div>
       <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden" onchange="onPhotoPicked(event)">
       <p id="photoStatus" class="muted"></p>
@@ -617,6 +623,8 @@ $('searchInput').addEventListener('input',()=>{
   if(!$('searchInput').value.trim()){doSearch('');return}
   st=setTimeout(()=>doSearch($('searchInput').value),300);
 });
+// Results render right under the box; on a phone with the keyboard open, keep the box at the top of the visible area.
+$('searchInput').addEventListener('focus',()=>{setTimeout(()=>{try{$('searchInput').scrollIntoView({block:'start',behavior:'smooth'})}catch(e){}},250)});
 async function doSearch(q){
   syncSearchClear();const request=++searchRequest;
   if(!(q||'').trim()){$('results').innerHTML='';return}
@@ -816,7 +824,7 @@ function updateHttpsBanner(){
     $('httpOrigin').textContent=location.origin;
     $('secureLinkBtn').classList.toggle('hidden',!secureScannerUrl());
     $('photoBtn').classList.add('hidden');
-    $('scanBtn').textContent='📸 صوّر الباركود';
+    $('scanBtn').textContent='📸';
   }
 }
 function scanErr(e){
