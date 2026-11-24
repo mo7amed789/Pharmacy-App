@@ -311,7 +311,7 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
       </div>
       <div id="adStep4" class="hidden"><p><b>راجع البيانات قبل الحفظ</b></p><div id="adReview"></div></div>
       <p id="addDrugErr" class="hidden" style="color:var(--err);font-weight:700"></p>
-      <div class="row"><button class="btn gray" id="adBackBtn" onclick="addDrugBack()">رجوع</button><button class="btn" id="adNextBtn" onclick="addDrugNext()">التالي</button><button class="btn hidden" id="adSaveBtn" onclick="saveNewDrug()">💾 حفظ الدواء</button></div>
+      <div class="row"><button class="btn gray" id="adBackBtn" onclick="addDrugBack()">رجوع</button><button class="btn" id="adNextBtn" onclick="addDrugNext()">التالي</button><button class="btn hidden" id="adSaveBtn" onclick="saveNewDrug()"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h7V3M8 21v-7h8v7"/></svg> حفظ الدواء</button></div>
       <button class="btn gray" onclick="closeAddDrug()">إلغاء بدون حفظ</button>
     </div>
 
@@ -371,7 +371,7 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
     <button class="btn" onclick="newInvoice()">➕ فاتورة جديدة</button></div></section>
 </main>
 
-<div id="bar" class="hidden"><div class="in"><div class="tot"><span id="barCount">السلة فارغة</span><b id="barTotal">0.00 ج.م</b><span id="barDisc"></span></div><button class="btn" id="saveBtn" onclick="saveInvoice()">💾 حفظ الفاتورة</button></div></div>
+<div id="bar" class="hidden"><div class="in"><div class="tot"><span id="barCount">السلة فارغة</span><b id="barTotal">0.00 ج.م</b><span id="barDisc"></span></div><button class="btn" id="saveBtn" onclick="saveInvoice()"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h7V3M8 21v-7h8v7"/></svg> حفظ الفاتورة</button></div></div>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -523,7 +523,7 @@ async function cloudSave(){
     scrollTo(0,0);
     if(oid!=null)pollCloudOrder(oid);
   }catch(e){showMsg('تعذّر إرسال الفاتورة للسحابة — تحقق من إنترنت الهاتف.')}
-  finally{saving=false;$('saveBtn').textContent='💾 حفظ الفاتورة'}
+  finally{saving=false;$('saveBtn').innerHTML=ICON_SAVE+' حفظ الفاتورة'}
 }
 async function pollCloudOrder(oid){
   clearTimeout(orderPoll);let tries=0;
@@ -629,7 +629,7 @@ $('searchInput').addEventListener('input',()=>{
   st=setTimeout(()=>doSearch($('searchInput').value),300);
 });
 // Results render right under the box; on a phone with the keyboard open, keep the box at the top of the visible area.
-$('searchInput').addEventListener('focus',()=>{setTimeout(()=>{try{$('searchInput').scrollIntoView({block:'start',behavior:'smooth'})}catch(e){}},250)});
+$('searchInput').addEventListener('focus',()=>{setTimeout(()=>{try{{const h=document.querySelector('header'),e=$('searchInput');scrollTo({top:Math.max(0,e.getBoundingClientRect().top+(window.pageYOffset||0)-(h?h.offsetHeight:0)-10),behavior:'smooth'})}}catch(e){}},250)});
 async function doSearch(q){
   syncSearchClear();const request=++searchRequest;
   if(!(q||'').trim()){$('results').innerHTML='';return}
@@ -771,7 +771,7 @@ async function saveInvoice(){
     if(d.change&&Number(d.change)>0){ch.innerHTML='الباقي <span class="ltr">'+f2(d.change)+'</span> ج.م';ch.classList.remove('hidden')}else ch.classList.add('hidden');
     scrollTo(0,0);pollLive();
   }catch(e){if(!quiet(e))showMsg('تعذّر الاتصال بالكمبيوتر.')}
-  finally{saving=false;$('saveBtn').textContent='💾 حفظ الفاتورة'}
+  finally{saving=false;$('saveBtn').innerHTML=ICON_SAVE+' حفظ الفاتورة'}
 }
 function newInvoice(){$('tabs').classList.remove('hidden');show('inv');doSearch($('searchInput').value)}
 
@@ -837,7 +837,7 @@ function scanErr(e){
   $('scanError').classList.remove('hidden');
 }
 const track=()=>{try{return stream&&stream.getVideoTracks()[0]}catch(e){return null}};
-const ICON_PHOTO='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',ICON_BOLT='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L5 14h6l-1 8 8-12h-6z"/></svg>';
+const ICON_SAVE='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h7V3M8 21v-7h8v7"/></svg>',ICON_PHOTO='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',ICON_BOLT='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L5 14h6l-1 8 8-12h-6z"/></svg>';
 function flashLbl(sup){$('flashBtn').innerHTML=ICON_BOLT+' '+(sup===false?'الفلاش: غير مدعوم':torchOn?'الفلاش: شغال':'الفلاش: مطفي')}
 async function setTorch(on){
   const t=track(),n=$('flashNote');
