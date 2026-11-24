@@ -1316,6 +1316,26 @@ def _make_handler(db_path, req_log=None):
                     rows = [dict(zip(keys, r)) for r in cur.fetchall()]
                 finally:
                     con.close()
+            # Rows whose barcode already exists in THIS pharmacy's own catalogue
+            # carry that existing Egyptian price (read-only lookup, nothing copied
+            # or changed). Everything else stays price-free.
+            codes = [r["barcode"] for r in rows if r.get("barcode")]
+            if codes:
+                db = self._db()
+                try:
+                    for r in rows:
+                        r["in_catalog"] = None
+                        if not r.get("barcode"):
+                            continue
+                        try:
+                            d, _pack = db.lookup_barcode(r["barcode"])  # GTIN-normalised
+                        except Exception:
+                            d = None
+                        if d:
+                            r["in_catalog"] = {"id": d["id"], "name": d["trade_en"],
+                                               "price": d["sell_price"]}
+                finally:
+                    db.close()
             self._send_json(200, {"ref": rows, "for_sale": False})
 
         def _api_live(self, parsed):
