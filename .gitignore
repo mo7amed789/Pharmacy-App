@@ -49,3 +49,6 @@ tests/srv619/
 
 # Private per-installation availability queue and OS worker lock
 *.availability.sqlite3*
+
+reference_catalog.sqlite3
+catalog/*.jsonl.gz

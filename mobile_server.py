@@ -1072,6 +1072,8 @@ def _make_handler(db_path, req_log=None):
                     self._serve_static(path[1:], "image/png")
                 elif path == "/api/drugs":
                     self._api_drugs(parsed)
+                elif path == "/api/ref-search":
+                    self._api_ref_search(parsed)
                 elif path == "/api/live":
                     self._api_live(parsed)
                 elif path == "/api/scan-request":
@@ -1286,6 +1288,34 @@ def _make_handler(db_path, req_log=None):
             finally:
                 db.close()
             self._send_json(200, {"drugs": out})
+
+        def _api_ref_search(self, parsed):
+            """Worldwide NON-SALE reference catalog (lookup only): no price,
+            never part of an invoice. Missing file -> empty list."""
+            if not self._require_pin():
+                return
+            q = (parse_qs(parsed.query).get("q", [""])[0] or "").strip()[:80]
+            rows = []
+            path = os.path.join(BASE, "reference_catalog.sqlite3")
+            if len(q) >= 3 and os.path.isfile(path):
+                import sqlite3
+                con = sqlite3.connect("file:%s?mode=ro" % path.replace("\\", "/"), uri=True)
+                try:
+                    like = "%" + q.replace("%", " ").replace("_", " ") + "%"
+                    digits = "".join(c for c in q if c.isdigit())
+                    if len(digits) < 6:
+                        digits = "-"
+                    cur = con.execute(
+                        "SELECT source,barcode,name,brand,category,quantity,countries,url "
+                        "FROM ref_products WHERE name LIKE ? OR brand LIKE ? OR barcode=? "
+                        "ORDER BY (barcode<>'') DESC, name LIMIT 30",
+                        (like, like, digits))
+                    keys = ("source", "barcode", "name", "brand", "category",
+                            "quantity", "countries", "url")
+                    rows = [dict(zip(keys, r)) for r in cur.fetchall()]
+                finally:
+                    con.close()
+            self._send_json(200, {"ref": rows, "for_sale": False})
 
         def _api_live(self, parsed):
             """Minimal stock/price refresh for the drugs currently in the cart."""
