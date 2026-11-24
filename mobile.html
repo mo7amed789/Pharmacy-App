@@ -263,6 +263,7 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
       <div id="unknownBar" class="box warn hidden"><b>⚠️ الباركود غير مضاف</b><p style="margin:4px 0">الباركود <b class="ltr" id="unknownCode"></b> غير مسجل في قاعدة البيانات.</p>
         <div class="row"><button class="btn" onclick="openAddDrug()">➕ إضافة الدواء</button><button class="btn gray" onclick="$('unknownBar').classList.add('hidden')">إغلاق</button></div></div>
       <div id="results"></div>
+      <div id="refResults"></div>
       <button class="btn sec" onclick="searchBarcode()"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M4 12h16"/></svg> بحث بالباركود المكتوب</button>
       <div id="httpsBanner" class="box warn hidden">
         <b><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg> الصفحة مفتوحة على http</b>
@@ -632,13 +633,22 @@ $('searchInput').addEventListener('input',()=>{
 $('searchInput').addEventListener('focus',()=>{setTimeout(()=>{try{{const h=document.querySelector('header'),e=$('searchInput');scrollTo({top:Math.max(0,e.getBoundingClientRect().top+(window.pageYOffset||0)-(h?h.offsetHeight:0)-10),behavior:'smooth'})}}catch(e){}},250)});
 async function doSearch(q){
   syncSearchClear();const request=++searchRequest;
-  if(!(q||'').trim()){$('results').innerHTML='';return}
+  if(!(q||'').trim()){$('results').innerHTML='';$('refResults').innerHTML='';return}
   if(cloudMode){
     try{const drugs=await cloudSearch(q);if(request===searchRequest)renderResults(drugs)}catch(e){if(request===searchRequest)showMsg('تعذّر البحث في السحابة — تحقق من إنترنت الهاتف.')}
     return;
   }
-  try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''));chk(r);const d=await r.json();if(request===searchRequest)renderResults(d.drugs||[])}
+  try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''));chk(r);const d=await r.json();if(request===searchRequest)renderResults(d.drugs||[]);if(request===searchRequest)searchRef(q,request)}
   catch(e){if(request===searchRequest&&!quiet(e))showMsg('تعذّر البحث.')}
+}
+async function searchRef(q,request){
+  const box=$('refResults');if(!box)return;
+  if((q||'').trim().length<3){box.innerHTML='';return}
+  try{const r=await api('/api/ref-search?q='+encodeURIComponent(q));if(!r.ok)return;const d=await r.json();if(request!==searchRequest)return;
+    const a=d.ref||[];if(!a.length){box.innerHTML='';return}
+    box.innerHTML='<details class="box" style="margin-top:8px"><summary><b>كتالوج مرجعي عالمي — للاطلاع فقط، غير متاح للبيع ('+a.length+')</b></summary><p class="muted" style="margin:6px 0">لا يوجد سعر مصري موثّق لهذه المنتجات، ولا يمكن إضافتها للفاتورة.</p>'+
+      a.map(x=>'<div style="padding:6px 0;border-top:1px solid #0001"><b>'+esc(x.name)+'</b><div class="muted">'+esc([x.brand,x.quantity,x.category].filter(Boolean).join(' · '))+'</div><div class="muted ltr">'+esc((x.barcode?x.barcode+' · ':'')+x.source+(x.countries?' · '+x.countries:''))+'</div></div>').join('')+'</details>'}
+  catch(e){}
 }
 async function searchBarcode(){
   const c=$('searchInput').value.trim();if(!c){showMsg('اكتب رقم الباركود أولاً.');return}
