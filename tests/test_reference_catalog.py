@@ -28,6 +28,8 @@ html = open(os.path.join(ROOT, "mobile.html"), encoding="utf-8").read()
 assert 'id="refResults"' in html and "غير متاح للبيع" in html
 srv = open(os.path.join(ROOT, "mobile_server.py"), encoding="utf-8").read()
 assert '"for_sale": False' in srv and "mode=ro" in srv
+assert "in_catalog" in srv and "in_catalog" in html and "lookup_barcode" in srv  # read-only price join, no copying
+assert "السعر المسجّل" in html and "ليس سعر السوق الحالي" in html  # stored pharmacy price, not a market price
 
 # openFDA NDC rows
 fda = {"results": [
