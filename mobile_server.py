@@ -1306,12 +1306,13 @@ def _make_handler(db_path, req_log=None):
                     if len(digits) < 6:
                         digits = "-"
                     cur = con.execute(
-                        "SELECT source,barcode,name,brand,category,quantity,countries,url "
-                        "FROM ref_products WHERE name LIKE ? OR brand LIKE ? OR barcode=? "
+                        "SELECT source,barcode,name,brand,category,quantity,countries,url,ingredients,form,pack,id_type,source_id "
+                        "FROM ref_products WHERE name LIKE ? OR brand LIKE ? OR ingredients LIKE ? OR barcode=? "
                         "ORDER BY (barcode<>'') DESC, name LIMIT 30",
-                        (like, like, digits))
+                        (like, like, like, digits))
                     keys = ("source", "barcode", "name", "brand", "category",
-                            "quantity", "countries", "url")
+                            "quantity", "countries", "url", "ingredients", "form",
+                            "pack", "id_type", "source_id")
                     rows = [dict(zip(keys, r)) for r in cur.fetchall()]
                 finally:
                     con.close()
