@@ -736,6 +736,12 @@ class DB:
     def _migrate_roles_branches(self):
         """Additive only: branches, attendance, users.branch_id, shifts.branch_id.
         Existing rows keep branch_id NULL (= no branch)."""
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS shift_members (
+            shift_id INTEGER NOT NULL, username TEXT NOT NULL, joined_at TEXT DEFAULT '',
+            PRIMARY KEY (shift_id, username))""")
+        # existing shifts: the opener is the (only) member
+        self.conn.execute("""INSERT OR IGNORE INTO shift_members (shift_id, username, joined_at)
+            SELECT id, cashier, opened_at FROM shifts WHERE cashier<>''""")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS branches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL, address TEXT DEFAULT '',
@@ -745,11 +751,81 @@ class DB:
             username TEXT NOT NULL, branch_id INTEGER,
             check_in TEXT NOT NULL, check_out TEXT DEFAULT '',
             note TEXT DEFAULT '', created_by TEXT DEFAULT '')""")
+        for table in ("batches", "sales", "expenses", "purchases", "stock_movements"):
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
+            if "branch_id" not in cols:
+                self.conn.execute("ALTER TABLE %s ADD COLUMN branch_id INTEGER" % table)
+        # stock movements follow their batch's branch (no call-site changes)
+        self.conn.execute("""CREATE TRIGGER IF NOT EXISTS trg_stock_mov_branch
+            AFTER INSERT ON stock_movements WHEN NEW.batch_id IS NOT NULL
+            BEGIN UPDATE stock_movements SET branch_id=
+              (SELECT branch_id FROM batches WHERE id=NEW.batch_id) WHERE id=NEW.id; END""")
         for table in ("users", "shifts"):
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
             if "branch_id" not in cols:
                 self.conn.execute("ALTER TABLE %s ADD COLUMN branch_id INTEGER" % table)
         self.conn.commit()
+
+    # ---------- branch scope ----------
+    # scope_branch: None = every branch (admin "all", or no branches at all);
+    # an int = only that branch's stock / sales / expenses / purchases.
+    # scope_user: when set (employees) sales and expenses are limited to
+    # that user's own rows.
+    scope_branch = None
+    scope_user = None
+
+    def set_scope(self, branch_id=None, user=None):
+        self.scope_branch = int(branch_id) if branch_id is not None else None
+        self.scope_user = user or None
+
+    def scope_for_user(self, username, own_only=True):
+        """(branch_id, user) scope for a logged-in account. Employees are
+        fixed to their branch (-1 = branches exist but none assigned, so
+        nothing is visible or sellable) and, if own_only, to their own sales."""
+        role = self.user_role(username)
+        bid = self.user_branch_id(username)
+        has_branches = bool(self.conn.execute("SELECT 1 FROM branches").fetchone())
+        if role == "cashier":
+            if bid is None and has_branches:
+                bid = -1
+            return bid, (username if own_only else None)
+        return bid, None
+
+    def _bsql(self, a=""):
+        if self.scope_branch is None:
+            return ""
+        return " AND %sbranch_id=%d" % (a, self.scope_branch)
+
+    @staticmethod
+    def _q(v):
+        return "'" + str(v).replace("'", "''") + "'"
+
+    def _ssql(self, a=""):
+        """sales scope: branch + (employee) own sales"""
+        out = self._bsql(a)
+        if self.scope_user:
+            out += " AND %scashier=%s" % (a, self._q(self.scope_user))
+        return out
+
+    def _esql(self, a=""):
+        out = self._bsql(a)
+        if self.scope_user:
+            out += " AND %suser=%s" % (a, self._q(self.scope_user))
+        return out
+
+    def _wb(self):
+        """branch id for a new stock/sale/expense row."""
+        if self.scope_branch == -1:
+            raise ValueError("لم يتم تعيين فرع لحسابك. راجع المدير")
+        if self.scope_branch is not None:
+            return self.scope_branch
+        act = [r[0] for r in self.conn.execute(
+            "SELECT id FROM branches WHERE active=1 ORDER BY id").fetchall()]
+        if not act:
+            return None
+        if len(act) == 1:
+            return act[0]
+        raise ValueError("اختر الفرع أولاً")
 
     # ---------- roles / branches / attendance ----------
     def user_role(self, username):
@@ -774,11 +850,16 @@ class DB:
         name = (name or "").strip()
         if not name:
             raise ValueError("اسم الفرع مطلوب")
+        first = not self.conn.execute("SELECT 1 FROM branches").fetchone()
         try:
             c = self.conn.execute("INSERT INTO branches (name, address, active, created_at) VALUES (?,?,1,?)",
                                   (name, (address or "").strip(), _now()))
         except sqlite3.IntegrityError:
             raise ValueError("يوجد فرع بنفس الاسم")
+        if first:
+            # all existing stock / sales / expenses / purchases / shifts belong to the first branch
+            for t in ("batches", "sales", "expenses", "purchases", "stock_movements", "shifts"):
+                self.conn.execute("UPDATE %s SET branch_id=? WHERE branch_id IS NULL" % t, (c.lastrowid,))
         self.conn.commit()
         return c.lastrowid
 
@@ -1129,8 +1210,8 @@ class DB:
             ids = [d["id"] for d in chunk]
             qmarks = ",".join("?" * len(ids))
             for r in self.conn.execute(
-                    "SELECT drug_id, COALESCE(SUM(qty_units),0) s FROM batches "
-                    "WHERE drug_id IN (%s) AND qty_units>0 GROUP BY drug_id"
+                    ("SELECT drug_id, COALESCE(SUM(qty_units),0) s FROM batches "
+                     "WHERE drug_id IN (%s) AND qty_units>0" + self._bsql() + " GROUP BY drug_id")
                     % qmarks, ids).fetchall():
                 stock[r["drug_id"]] = int(r["s"])
         for d in dicts:
@@ -1140,7 +1221,7 @@ class DB:
 
     def _drug_with_stock(self, d):
         row = self.conn.execute(
-            "SELECT COALESCE(SUM(qty_units),0) s FROM batches WHERE drug_id=? AND qty_units>0",
+            "SELECT COALESCE(SUM(qty_units),0) s FROM batches WHERE drug_id=? AND qty_units>0" + self._bsql(),
             (d["id"],)).fetchone()
         d["stock_units"] = int(row["s"])
         d["stock_boxes"] = round(d["stock_units"] / units_per_box(d), 2)
@@ -1341,7 +1422,7 @@ class DB:
         rows = self.conn.execute(
             """SELECT b.*, COALESCE(s.name,'') AS supplier_name FROM batches b
             LEFT JOIN suppliers s ON s.id=b.supplier_id
-            WHERE b.drug_id=? ORDER BY b.expiry ASC, b.id ASC""", (drug_id,)).fetchall()
+            WHERE b.drug_id=?""" + self._bsql("b.") + " ORDER BY b.expiry ASC, b.id ASC", (drug_id,)).fetchall()
         return [dict(r) for r in rows]
 
     def _deduct_fefo(self, c, drug_id, qty_units, user, ref):
@@ -1356,7 +1437,7 @@ class DB:
         today = _today()
         rows = c.execute(
             """SELECT * FROM batches WHERE drug_id=? AND qty_units>0
-            AND (expiry='' OR expiry IS NULL OR expiry>=?)
+            AND (expiry='' OR expiry IS NULL OR expiry>=?)""" + self._bsql() + """
             ORDER BY (expiry='' OR expiry IS NULL) ASC, expiry ASC, id ASC""",
             (drug_id, today)).fetchall()
         for b in rows:
@@ -1373,7 +1454,7 @@ class DB:
         if remaining > 0:
             expired = c.execute(
                 """SELECT COALESCE(SUM(qty_units),0) FROM batches
-                WHERE drug_id=? AND qty_units>0 AND expiry<>'' AND expiry<?""",
+                WHERE drug_id=? AND qty_units>0 AND expiry<>'' AND expiry<?""" + self._bsql(),
                 (drug_id, today)).fetchone()[0]
             if expired:
                 raise ValueError("المخزون المتاح منتهي الصلاحية — اعزله أولاً قبل البيع")
@@ -1386,7 +1467,7 @@ class DB:
         row = self.conn.execute(
             """SELECT COALESCE(SUM(qty_units),0) FROM batches
             WHERE drug_id=? AND qty_units>0
-            AND (expiry='' OR expiry IS NULL OR expiry>=?)""",
+            AND (expiry='' OR expiry IS NULL OR expiry>=?)""" + self._bsql(),
             (drug_id, _today())).fetchone()
         return int(row[0])
 
@@ -1406,9 +1487,9 @@ class DB:
                 buy_unit = _round(float(drug.get("buy_price") or 0) / units_per_box(drug))
             c.execute(
                 """INSERT INTO batches (drug_id, batch_no, expiry, qty_units,
-                buy_price_unit, created_at) VALUES (?,?,?,?,?,?)""",
+                buy_price_unit, created_at, branch_id) VALUES (?,?,?,?,?,?,?)""",
                 (drug_id, batch_no or "ADJ", exp,
-                 qty_units_delta, buy_unit, _now()))
+                 qty_units_delta, buy_unit, _now(), self._wb()))
             batch_id = c.lastrowid
         else:
             batch_id = None
@@ -1432,7 +1513,7 @@ class DB:
         rows = self.conn.execute(
             """SELECT b.*, d.trade_en, d.trade_ar FROM batches b
             JOIN drugs d ON d.id=b.drug_id
-            WHERE b.qty_units>0 AND b.expiry<>'' AND b.expiry<=?
+            WHERE b.qty_units>0 AND b.expiry<>'' AND b.expiry<=?""" + self._bsql("b.") + """
             ORDER BY b.expiry ASC""", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
@@ -1608,6 +1689,7 @@ class DB:
             if row:
                 return row["id"], row["invoice_no"], float(row["total"]), float(row["change_amount"])
         c = self.conn.cursor()
+        sale_branch = self._wb()
         lines, subtotal = self._validate_sale_lines(items)
         try:
             discount = float(discount or 0)
@@ -1642,12 +1724,12 @@ class DB:
                 c.execute(
                     """INSERT INTO sales (invoice_no, date, cashier, customer_id, subtotal,
                     discount, total, paid, change_amount, payment_method, status, shift_id, created_at,
-                    source, printed_at, client_ref)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    source, printed_at, client_ref, branch_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (invoice_no, _today(), cashier, customer_id, _round(subtotal),
                      _round(discount), total, _round(paid), change,
                      payment_method, "completed", shift_id, _now(),
-                     source or "pc", "", client_ref or ""))
+                     source or "pc", "", client_ref or "", sale_branch))
                 sale_id = c.lastrowid
                 break
             except sqlite3.IntegrityError:
@@ -1718,7 +1800,7 @@ class DB:
             """SELECT s.*, COALESCE(cu.name,'') AS customer_name FROM sales s
             LEFT JOIN customers cu ON cu.id=s.customer_id
             WHERE s.source='mobile' AND s.status='completed'
-            AND (s.printed_at IS NULL OR s.printed_at='')
+            AND (s.printed_at IS NULL OR s.printed_at='')""" + self._ssql("s.") + """
             ORDER BY s.id DESC""").fetchall()
         return [dict(r) for r in rows]
 
@@ -1726,7 +1808,7 @@ class DB:
         rows = self.conn.execute(
             """SELECT s.*, COALESCE(cu.name,'') AS customer_name FROM sales s
             LEFT JOIN customers cu ON cu.id=s.customer_id
-            WHERE s.source='mobile' ORDER BY s.id DESC LIMIT ?""", (limit,)).fetchall()
+            WHERE s.source='mobile'""" + self._ssql("s.") + " ORDER BY s.id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
     def get_all_sales(self, date_from=None, date_to=None, source=None,
@@ -1742,7 +1824,7 @@ class DB:
         sql = """SELECT s.*, COALESCE(cu.name,'') AS customer_name,
                  (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id=s.id) AS item_count
                  FROM sales s LEFT JOIN customers cu ON cu.id=s.customer_id
-                 WHERE 1=1"""
+                 WHERE 1=1""" + self._ssql("s.")
         params = []
         if date_from:
             sql += " AND s.date>=?"
@@ -1843,7 +1925,15 @@ class DB:
         return self.group_sale_items(self.get_sale_items(sale_id))
 
     @_atomic
-    def return_sale(self, sale_id, user, return_shift_id=None,
+    def _deny_employee_invoice_change(self, user):
+        if self.user_role(user) == "cashier":
+            raise PermissionError("إلغاء أو تعديل الفاتورة للمدير فقط")
+
+    def return_sale(self, sale_id, user, *a, **k):
+        self._deny_employee_invoice_change(user)
+        return self._return_sale_impl(sale_id, user, *a, **k)
+
+    def _return_sale_impl(self, sale_id, user, return_shift_id=None,
                     refund_method=None, reason=""):
         """Full return of a completed sale: restock batches, reverse credit.
         STEP2 (2B): the sale keeps its ORIGINAL shift_id — the return is
@@ -1874,9 +1964,9 @@ class DB:
             if cur.rowcount == 0:
                 c.execute(
                     """INSERT INTO batches (drug_id, batch_no, expiry, qty_units,
-                    buy_price_unit, created_at) VALUES (?,?,?,?,?,?)""",
+                    buy_price_unit, created_at, branch_id) VALUES (?,?,?,?,?,?,?)""",
                     (it["drug_id"], "RETURN-%s" % sale["invoice_no"], "",
-                     it["qty_units"], it["buy_price_unit"], _now()))
+                     it["qty_units"], it["buy_price_unit"], _now(), sale["branch_id"]))
                 batch_id = c.lastrowid
             else:
                 batch_id = it["batch_id"]
@@ -1917,7 +2007,11 @@ class DB:
         return [dict(r) for r in rows]
 
     @_atomic
-    def edit_sale(self, sale_id, user, items, discount=0.0, payment_method=None,
+    def edit_sale(self, sale_id, user, *a, **k):
+        self._deny_employee_invoice_change(user)
+        return self._edit_sale_impl(sale_id, user, *a, **k)
+
+    def _edit_sale_impl(self, sale_id, user, items, discount=0.0, payment_method=None,
                   customer_id=None, paid=None):
         """Edit a COMPLETED invoice in ONE atomic transaction.
 
@@ -1990,9 +2084,9 @@ class DB:
             if cur.rowcount == 0:
                 c.execute(
                     """INSERT INTO batches (drug_id, batch_no, expiry, qty_units,
-                    buy_price_unit, created_at) VALUES (?,?,?,?,?,?)""",
+                    buy_price_unit, created_at, branch_id) VALUES (?,?,?,?,?,?,?)""",
                     (it["drug_id"], "RETURN-%s" % sale["invoice_no"], "",
-                     it["qty_units"], it["buy_price_unit"], _now()))
+                     it["qty_units"], it["buy_price_unit"], _now(), sale["branch_id"]))
                 batch_id = c.lastrowid
             else:
                 batch_id = it["batch_id"]
@@ -2140,7 +2234,7 @@ class DB:
         rows = self.conn.execute(
             """SELECT s.*, COALESCE(cu.name,'') AS customer_name FROM sales s
             LEFT JOIN customers cu ON cu.id=s.customer_id
-            WHERE s.date=? ORDER BY s.id DESC""", (day,)).fetchall()
+            WHERE s.date=?""" + self._ssql("s.") + " ORDER BY s.id DESC", (day,)).fetchall()
         return [dict(r) for r in rows]
 
     # ---------- purchases / suppliers ----------
@@ -2221,10 +2315,11 @@ class DB:
             total += _round(float(it["qty_boxes"]) * float(it["buy_price"]))
         if paid < 0 or paid > total:
             raise ValueError("المبلغ المدفوع للمورد يجب أن يكون بين صفر وإجمالي الفاتورة")
+        pur_branch = self._wb()
         c.execute(
-            """INSERT INTO purchases (supplier_id, invoice_no, date, total, paid, user, created_at)
-            VALUES (?,?,?,?,?,?,?)""",
-            (supplier_id, invoice_no, _today(), _round(total), _round(paid), user, _now()))
+            """INSERT INTO purchases (supplier_id, invoice_no, date, total, paid, user, created_at, branch_id)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (supplier_id, invoice_no, _today(), _round(total), _round(paid), user, _now(), pur_branch))
         purchase_id = c.lastrowid
         for it in items:
             drug = it["drug"]
@@ -2233,9 +2328,9 @@ class DB:
             buy_unit = _round(float(it["buy_price"]) / units_per_box(drug))
             c.execute(
                 """INSERT INTO batches (drug_id, batch_no, expiry, qty_units,
-                buy_price_unit, supplier_id, created_at) VALUES (?,?,?,?,?,?,?)""",
+                buy_price_unit, supplier_id, created_at, branch_id) VALUES (?,?,?,?,?,?,?,?)""",
                 (drug["id"], it.get("batch_no", ""), it.get("_expiry", ""),
-                 qty_units, buy_unit, supplier_id, _now()))
+                 qty_units, buy_unit, supplier_id, _now(), pur_branch))
             batch_id = c.lastrowid
             c.execute(
                 """INSERT INTO purchase_items (purchase_id, drug_id, batch_id, qty_boxes,
@@ -2330,7 +2425,7 @@ class DB:
             # which never sells expired stock): nearest expiry first,
             # dateless last.
             rows = c.execute(
-                """SELECT * FROM batches WHERE drug_id=? AND qty_units>0
+                """SELECT * FROM batches WHERE drug_id=? AND qty_units>0""" + self._bsql() + """
                 ORDER BY (expiry='' OR expiry IS NULL) ASC, expiry ASC, id ASC""",
                 (drug_id,)).fetchall()
             remaining = qty_units
@@ -2464,17 +2559,51 @@ class DB:
             raise ValueError("رصيد بداية الوردية غير صالح")
         if opening_float < 0:
             raise ValueError("رصيد بداية الوردية لا يمكن أن يكون سالباً")
-        row = self.conn.execute(
-            "SELECT id FROM shifts WHERE cashier=? AND status='open'",
-            (cashier,)).fetchone()
-        if row:
+        if self.open_shift_for(cashier):
             raise ValueError("توجد وردية مفتوحة بالفعل لهذا الكاشير")
+        bid = self.user_branch_id(cashier)
+        # one shared drawer per branch; users with no branch keep the old
+        # one-shift-per-cashier behaviour
+        other = self.open_branch_shift(bid) if bid is not None else None
+        if other:
+            raise ValueError("توجد وردية مفتوحة بالفعل في هذا الفرع (#%d). انضم إليها بدل فتح وردية جديدة" % other["id"])
         c = self.conn.cursor()
         c.execute(
             "INSERT INTO shifts (cashier, opened_at, opening_float, status, branch_id) VALUES (?,?,?,?,?)",
-            (cashier, _now(), opening_float, "open", self.user_branch_id(cashier)))
+            (cashier, _now(), opening_float, "open", bid))
+        c.execute("INSERT INTO shift_members (shift_id, username, joined_at) VALUES (?,?,?)",
+                  (c.lastrowid, cashier, _now()))
         self.conn.commit()
         return c.lastrowid
+
+    def open_branch_shift(self, branch_id):
+        """The open shift (shared drawer) of a branch, or None."""
+        if branch_id is None:
+            row = self.conn.execute(
+                "SELECT * FROM shifts WHERE status='open' AND branch_id IS NULL ORDER BY id DESC LIMIT 1").fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT * FROM shifts WHERE status='open' AND branch_id=? ORDER BY id DESC LIMIT 1",
+                (branch_id,)).fetchone()
+        return dict(row) if row else None
+
+    def join_shift(self, username):
+        """An employee joins the open shift of his own branch. Several
+        employees can work one shift; attendance stays per person."""
+        if self.open_shift_for(username):
+            raise ValueError("أنت مشترك في وردية مفتوحة بالفعل")
+        sh = self.open_branch_shift(self.user_branch_id(username))
+        if not sh:
+            raise ValueError("لا توجد وردية مفتوحة في فرعك لتنضم إليها")
+        self.conn.execute("INSERT OR IGNORE INTO shift_members (shift_id, username, joined_at) VALUES (?,?,?)",
+                          (sh["id"], username, _now()))
+        self.conn.commit()
+        return sh["id"]
+
+    def shift_members(self, shift_id):
+        return [dict(r) for r in self.conn.execute(
+            "SELECT username, joined_at FROM shift_members WHERE shift_id=? ORDER BY joined_at",
+            (shift_id,)).fetchall()]
 
     def active_shift_id(self):
         """STEP2 (2A): id of the currently open shift, if any — the
@@ -2563,7 +2692,13 @@ class DB:
             "SELECT COUNT(*) n, COALESCE(SUM(total),0) t FROM sales "
             "WHERE shift_id IS NULL AND date=? AND status='completed'",
             (opened_day,)).fetchone()
+        per_emp = [dict(r) for r in c.execute(
+            "SELECT cashier AS username, COUNT(*) n, COALESCE(SUM(total),0) total "
+            "FROM sales WHERE shift_id=? AND status='completed' GROUP BY cashier ORDER BY cashier",
+            (shift_id,)).fetchall()]
         return {"shift_id": shift_id, "cashier": row["cashier"],
+                "members": [m["username"] for m in self.shift_members(shift_id)],
+                "per_employee": per_emp,
                 "opening_float": _round(float(row["opening_float"] or 0)),
                 "cash_collected": _round(cash_collected),
                 "card_total": _round(card_total),
@@ -2576,7 +2711,8 @@ class DB:
 
     def open_shift_for(self, cashier):
         row = self.conn.execute(
-            "SELECT * FROM shifts WHERE cashier=? AND status='open' ORDER BY id DESC LIMIT 1",
+            "SELECT sh.* FROM shifts sh JOIN shift_members m ON m.shift_id=sh.id "
+            "WHERE m.username=? AND sh.status='open' ORDER BY sh.id DESC LIMIT 1",
             (cashier,)).fetchone()
         return dict(row) if row else None
 
@@ -2619,13 +2755,13 @@ class DB:
         if not (kind or "").strip():
             raise ValueError("نوع المصروف مطلوب")
         self.conn.execute(
-            "INSERT INTO expenses (date, kind, amount, notes, user, shift_id) VALUES (?,?,?,?,?,?)",
-            (_today(), kind.strip(), amount, notes, user, shift_id))
+            "INSERT INTO expenses (date, kind, amount, notes, user, shift_id, branch_id) VALUES (?,?,?,?,?,?,?)",
+            (_today(), kind.strip(), amount, notes, user, shift_id, self._wb()))
         self.conn.commit()
 
     def expenses_on(self, day=None):
         rows = self.conn.execute(
-            "SELECT * FROM expenses WHERE date=? ORDER BY id DESC", (day or _today(),)).fetchall()
+            "SELECT * FROM expenses WHERE date=?" + self._esql() + " ORDER BY id DESC", (day or _today(),)).fetchall()
         return [dict(r) for r in rows]
 
     # ---------- reports ----------
@@ -2647,7 +2783,7 @@ class DB:
               ROUND(SUM(CASE WHEN s.status='completed' AND s.source='mobile' THEN s.total ELSE 0 END),2) AS mobile_sales,
               SUM(CASE WHEN s.source='mobile' THEN 1 ELSE 0 END) AS mobile_count
             FROM sales s LEFT JOIN users u ON u.username=s.cashier
-            WHERE s.date>=? AND s.date<=?
+            WHERE s.date>=? AND s.date<=?""" + self._ssql("s.") + """
             GROUP BY s.cashier ORDER BY s.cashier
         """, (date_from, date_to)).fetchall()
         return [dict(r) for r in rows]
@@ -2659,19 +2795,19 @@ class DB:
             COALESCE(SUM(CASE WHEN payment_method='cash' THEN total ELSE 0 END),0) cash,
             COALESCE(SUM(CASE WHEN payment_method='card' THEN total ELSE 0 END),0) card,
             COALESCE(SUM(CASE WHEN payment_method='credit' THEN total ELSE 0 END),0) credit
-            FROM sales WHERE date=? AND status='completed'""", (day,)).fetchone()
+            FROM sales WHERE date=? AND status='completed'""" + self._ssql(), (day,)).fetchone()
         # v5.7: profit used to ignore discounts — a 10 EGP discount
         # overstated profit by exactly 10 EGP.
         profit = self.conn.execute(
             """SELECT COALESCE(SUM(line_total - qty_units*buy_price_unit),0) p
             FROM sale_items si JOIN sales s ON s.id=si.sale_id
-            WHERE s.date=? AND s.status='completed'""", (day,)).fetchone()
+            WHERE s.date=? AND s.status='completed'""" + self._ssql("s."), (day,)).fetchone()
         disc = self.conn.execute(
-            "SELECT COALESCE(SUM(discount),0) d FROM sales WHERE date=? AND status='completed'",
+            "SELECT COALESCE(SUM(discount),0) d FROM sales WHERE date=? AND status='completed'" + self._ssql(),
             (day,)).fetchone()
         profit_p = _round(float(profit["p"] or 0) - float(disc["d"] or 0))
         exp = self.conn.execute(
-            "SELECT COALESCE(SUM(amount),0) e FROM expenses WHERE date=?", (day,)).fetchone()
+            "SELECT COALESCE(SUM(amount),0) e FROM expenses WHERE date=?" + self._esql(), (day,)).fetchone()
         # STEP2 (2C): purchase returns for the day (stock sent back to suppliers).
         pr = self.conn.execute(
             """SELECT COUNT(*) n, COALESCE(SUM(total),0) t FROM purchase_returns
@@ -2692,7 +2828,7 @@ class DB:
         sql = """SELECT d.trade_en, d.trade_ar, SUM(si.qty_units) units,
             SUM(si.line_total) total FROM sale_items si
             JOIN sales s ON s.id=si.sale_id JOIN drugs d ON d.id=si.drug_id
-            WHERE s.status='completed'"""
+            WHERE s.status='completed'""" + self._ssql("s.")
         params = []
         if day:
             sql += " AND s.date=?"
@@ -2708,7 +2844,7 @@ class DB:
             SUM(b.qty_units*b.buy_price_unit) cost_value,
             SUM(b.qty_units * d.sell_price / (d.strips_per_box*d.tablets_per_strip)) sell_value
             FROM batches b JOIN drugs d ON d.id=b.drug_id
-            WHERE b.qty_units>0 GROUP BY b.drug_id ORDER BY cost_value DESC""").fetchall()
+            WHERE b.qty_units>0""" + self._bsql("b.") + """ GROUP BY b.drug_id ORDER BY cost_value DESC""").fetchall()
         out = [dict(r) for r in rows]
         total_cost = _round(sum(r["cost_value"] or 0 for r in out))
         total_sell = _round(sum(r["sell_value"] or 0 for r in out))
@@ -2760,7 +2896,7 @@ class DB:
                     "SELECT barcode FROM barcodes WHERE drug_id=? AND pack_level='box' LIMIT 1",
                     (r["id"],)).fetchone()
                 stock = self.conn.execute(
-                    "SELECT COALESCE(SUM(qty_units),0) s FROM batches WHERE drug_id=? AND qty_units>0",
+                    "SELECT COALESCE(SUM(qty_units),0) s FROM batches WHERE drug_id=? AND qty_units>0" + self._bsql(),
                     (r["id"],)).fetchone()["s"]
                 w.writerow([r["trade_en"], r["trade_ar"], r["scientific"], r["company"],
                             r["form"], r["strength"], r["category"], r["strips_per_box"],
