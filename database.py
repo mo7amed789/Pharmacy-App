@@ -76,6 +76,53 @@ def _verify_password(password, stored):
         return False
 
 
+# ---------- owner activity log + system log helpers ----------
+_AUTO = object()
+_SENSITIVE_KEY = re.compile(r"(pass(word)?|hash|pin|token|secret|api[-_]?key|apikey|authorization|bearer|"
+                            r"service[-_]?role|anon[-_]?key|jwt|cookie|credential|card)", re.I)
+_SECRET_TEXT = [
+    (re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [redacted]"),
+    (re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(\.[A-Za-z0-9_-]*)?"), "[redacted-jwt]"),
+    (re.compile(r"(?i)\b(pass(?:word)?|pwd|pin|token|secret|api[-_]?key|apikey|key|authorization|cookie)\b\s*[=:]\s*[^\s,;&\"']+"),
+     r"\1=[redacted]"),
+    (re.compile(r"(?i)([?&](?:key|apikey|token|access_token|pin)=)[^&\s]+"), r"\1[redacted]"),
+    (re.compile(r"\b(?:sk|sb|pk|rk)[-_][A-Za-z0-9_-]{16,}"), "[redacted-key]"),
+    (re.compile(r"\b[A-Fa-f0-9]{40,}\b"), "[redacted-hex]"),
+    (re.compile(r"\b[A-Za-z0-9+/_-]{48,}={0,2}"), "[redacted-long]"),
+]
+
+
+def redact_text(text, limit=2000):
+    """Never let a password, PIN, token or API key reach a log row."""
+    t = "" if text is None else str(text)
+    for rx, sub in _SECRET_TEXT:
+        t = rx.sub(sub, t)
+    return t[:limit]
+
+
+def _clean_obj(o, depth=0):
+    if depth > 4:
+        return "..."
+    if isinstance(o, dict):
+        return {str(k): ("[redacted]" if _SENSITIVE_KEY.search(str(k)) else _clean_obj(v, depth + 1))
+                for k, v in list(o.items())[:60]}
+    if isinstance(o, (list, tuple)):
+        return [_clean_obj(v, depth + 1) for v in list(o)[:60]]
+    if isinstance(o, (int, float)) or o is None or isinstance(o, bool):
+        return o
+    return redact_text(o, 300)
+
+
+def _jdump(o):
+    if o is None:
+        return ""
+    import json as _json
+    try:
+        return _json.dumps(_clean_obj(o), ensure_ascii=False)[:4000]
+    except Exception:
+        return ""
+
+
 def _atomic(fn):
     """Decorator: any exception inside a multi-statement write rolls
     the whole transaction back, so a failed sale/purchase/return can
@@ -778,6 +825,26 @@ class DB:
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
             if "branch_id" not in cols:
                 self.conn.execute("ALTER TABLE %s ADD COLUMN branch_id INTEGER" % table)
+        # owner activity log: audit_log gets who/where/what-changed columns
+        acols = [r[1] for r in self.conn.execute("PRAGMA table_info(audit_log)").fetchall()]
+        for col, typ in (("source", "TEXT DEFAULT ''"), ("role", "TEXT DEFAULT ''"),
+                         ("entity", "TEXT DEFAULT ''"), ("entity_id", "TEXT DEFAULT ''"),
+                         ("branch_id", "INTEGER"), ("shift_id", "INTEGER"),
+                         ("before_json", "TEXT DEFAULT ''"), ("after_json", "TEXT DEFAULT ''")):
+            if col not in acols:
+                self.conn.execute("ALTER TABLE audit_log ADD COLUMN %s %s" % (col, typ))
+        # system log: errors, updates, startup, migrations (no staff activity here)
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS system_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT '',
+            level TEXT DEFAULT 'info', component TEXT DEFAULT '', event TEXT DEFAULT '',
+            message TEXT DEFAULT '', detail TEXT DEFAULT '', app_version TEXT DEFAULT '')""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity, entity_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_system_created ON system_log(created_at)")
+        # history cannot be edited in place (rows are only ever added, or aged out)
+        for t in ("audit_log", "system_log"):
+            self.conn.execute("""CREATE TRIGGER IF NOT EXISTS trg_%s_no_update BEFORE UPDATE ON %s
+                BEGIN SELECT RAISE(ABORT, 'log rows are append-only'); END""" % (t, t))
         self.conn.commit()
 
     # ---------- branch scope ----------
@@ -885,12 +952,19 @@ class DB:
             # shared walk-in customer stays global
             self.conn.execute("UPDATE customers SET branch_id=? WHERE branch_id IS NULL AND name<>?",
                               (c.lastrowid, "عميل نقدي"))
+        self._audit_row(actor, "branch_add", name, entity="branch", entity_id=c.lastrowid,
+                        after={"name": name, "address": (address or "").strip(), "adopted_existing_data": bool(first)},
+                        branch_id=c.lastrowid)
         self.conn.commit()
         return c.lastrowid
 
     def set_branch_active(self, actor, branch_id, active):
         self._require_admin(actor)
+        _old = self.conn.execute("SELECT name, active FROM branches WHERE id=?", (branch_id,)).fetchone()
         self.conn.execute("UPDATE branches SET active=? WHERE id=?", (1 if active else 0, branch_id))
+        self._audit_row(actor, "branch_toggle", _old["name"] if _old else str(branch_id), entity="branch",
+                        entity_id=branch_id, before={"active": _old["active"] if _old else None},
+                        after={"active": 1 if active else 0}, branch_id=branch_id)
         self.conn.commit()
 
     def set_user_branch(self, actor, username, branch_id):
@@ -898,7 +972,11 @@ class DB:
         if branch_id is not None and not self.conn.execute(
                 "SELECT 1 FROM branches WHERE id=?", (branch_id,)).fetchone():
             raise ValueError("الفرع غير موجود")
+        _old_b = self.user_branch_id(username)
         self.conn.execute("UPDATE users SET branch_id=? WHERE username=?", (branch_id, username))
+        self._audit_row(actor, "user_branch", "%s: %s -> %s" % (username, _old_b, branch_id), entity="user",
+                        entity_id=username, before={"branch_id": _old_b}, after={"branch_id": branch_id},
+                        branch_id=branch_id)
         self.conn.commit()
 
     def user_branch_id(self, username):
@@ -920,6 +998,7 @@ class DB:
         c = self.conn.execute(
             "INSERT INTO attendance (username, branch_id, check_in, created_by) VALUES (?,?,?,?)",
             (username, self.user_branch_id(username), _now(), username))
+        self._audit_row(username, "attendance_in", "", entity="attendance", entity_id=c.lastrowid)
         self.conn.commit()
         return c.lastrowid
 
@@ -928,6 +1007,8 @@ class DB:
         if not row:
             raise ValueError("لا يوجد حضور مفتوح لتسجيل الانصراف")
         self.conn.execute("UPDATE attendance SET check_out=? WHERE id=?", (_now(), row["id"]))
+        self._audit_row(username, "attendance_out", "", entity="attendance", entity_id=row["id"],
+                        before={"check_in": row["check_in"]})
         self.conn.commit()
         return row["id"]
 
@@ -954,6 +1035,9 @@ class DB:
             "INSERT INTO attendance (username, branch_id, check_in, check_out, note, created_by) VALUES (?,?,?,?,?,?)",
             (username, self.user_branch_id(username), a.isoformat(timespec="seconds"),
              b.isoformat(timespec="seconds") if b else "", (note or "").strip(), actor))
+        self._audit_row(actor, "attendance_manual", username, entity="attendance", entity_id=c.lastrowid,
+                        after={"employee": username, "check_in": a.isoformat(timespec="seconds"),
+                               "check_out": b.isoformat(timespec="seconds") if b else "", "note": (note or "").strip()})
         self.conn.commit()
         return c.lastrowid
 
@@ -1028,11 +1112,16 @@ class DB:
                 pass
 
     def _prune_audit_log(self):
-        """Keep the audit log from growing forever: newest 5,000 rows."""
+        """Keep logs bounded by AGE (the owner's activity history is not cut
+        to a row count): activity 2 years, system log 1 year."""
         try:
-            self.conn.execute(
-                "DELETE FROM audit_log WHERE id NOT IN "
-                "(SELECT id FROM audit_log ORDER BY id DESC LIMIT 5000)")
+            self.conn.execute("DELETE FROM audit_log WHERE created_at<>'' AND created_at < ?",
+                              ((datetime.now() - timedelta(days=730)).isoformat(timespec="seconds"),))
+            try:
+                self.conn.execute("DELETE FROM system_log WHERE created_at < ?",
+                                  ((datetime.now() - timedelta(days=365)).isoformat(timespec="seconds"),))
+            except sqlite3.OperationalError:
+                pass
             self.conn.commit()
         except Exception:
             try:
@@ -1093,7 +1182,18 @@ class DB:
             "SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         return row["value"] if row else default
 
+    # settings an owner wants to see change (internal counters / UI prefs are not logged)
+    _TRACKED_SETTINGS = ("pharmacy_name", "pharmacy_phone", "mobile_shared_pin_enabled",
+                         "autosync_enabled", "autobackup_enabled")
+
     def set_setting(self, key, value):
+        if key in self._TRACKED_SETTINGS or str(key).startswith("receipt_") or str(key).startswith("printer"):
+            _old = self.get_setting(key, "")
+            if str(_old) != str(value):
+                _sens = bool(_SENSITIVE_KEY.search(str(key)))
+                self._audit_row(self.actor, "setting_changed", str(key), entity="setting", entity_id=key,
+                                before=None if _sens else {"value": _old},
+                                after={"changed": True} if _sens else {"value": str(value)})
         self.conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1116,11 +1216,100 @@ class DB:
         return pin
 
     # ---------- audit ----------
-    def audit(self, user, action, details=""):
-        self.conn.execute(
-            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
-            (user or "", action, details or "", _now()))
+    # who is acting / through which door (the app sets these; the phone
+    # server sets source="mobile" and the employee's name per request)
+    actor = ""
+    source = "desktop"
+    app_version = ""
+
+    def set_actor(self, username, source=None):
+        self.actor = username or ""
+        if source:
+            self.source = source
+
+    def _audit_row(self, user, action, details="", entity="", entity_id=None,
+                   before=None, after=None, branch_id=_AUTO, shift_id=_AUTO):
+        """Insert one activity row WITHOUT committing (so it lands in the
+        same transaction as the change it describes). Never raises."""
+        try:
+            user = user or self.actor or ""
+            role = ""
+            if user:
+                try:
+                    role = self.user_role(user) or ""
+                except Exception:
+                    role = ""
+            if branch_id is _AUTO:
+                sb = self.scope_branch
+                if sb is not None and sb >= 0:
+                    branch_id = sb
+                else:
+                    try:
+                        branch_id = self.user_branch_id(user) if user else None
+                    except Exception:
+                        branch_id = None
+            if shift_id is _AUTO:
+                try:
+                    sh = self.open_shift_for(user) if user else None
+                    shift_id = sh["id"] if sh else None
+                except Exception:
+                    shift_id = None
+            self.conn.execute(
+                "INSERT INTO audit_log (user, action, details, created_at, source, role, entity, entity_id,"
+                " branch_id, shift_id, before_json, after_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (user, action, redact_text(details, 1500), _now(), self.source or "", role,
+                 entity or "", "" if entity_id is None else str(entity_id),
+                 branch_id, shift_id, _jdump(before), _jdump(after)))
+        except Exception as e:
+            try:
+                import sys
+                print("activity log write failed:", type(e).__name__, file=sys.stderr)
+            except Exception:
+                pass
+
+    def audit(self, user, action, details="", **kw):
+        self._audit_row(user, action, details, **kw)
         self.conn.commit()
+
+    def syslog(self, level, component, event, message="", detail=""):
+        """System log (errors, updates, startup). Never raises, never stores
+        passwords / PINs / keys (text is redacted before it is written)."""
+        try:
+            self.conn.execute(
+                "INSERT INTO system_log (created_at, level, component, event, message, detail, app_version)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (_now(), level, component, event, redact_text(message, 500),
+                 redact_text(detail, 3000), self.app_version or ""))
+            self.conn.commit()
+        except Exception:
+            pass
+
+    def system_log_query(self, level="", component="", text="", limit=200):
+        sql, args = "SELECT * FROM system_log WHERE 1=1", []
+        if level:
+            sql += " AND level=?"; args.append(level)
+        if component:
+            sql += " AND component=?"; args.append(component)
+        if text:
+            sql += " AND (message LIKE ? OR event LIKE ? OR detail LIKE ?)"
+            args += ["%" + text + "%"] * 3
+        sql += " ORDER BY id DESC LIMIT ?"; args.append(int(limit))
+        return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
+
+    def export_logs_csv(self, path, kind="activity"):
+        """Owner export (UTF-8 with BOM so Excel shows Arabic)."""
+        if kind == "system":
+            rows = self.conn.execute("SELECT * FROM system_log ORDER BY id").fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT a.*, b.name AS branch_name FROM audit_log a LEFT JOIN branches b ON b.id=a.branch_id ORDER BY a.id").fetchall()
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            if rows:
+                w.writerow(rows[0].keys())
+                for r in rows:
+                    w.writerow([r[k] for k in r.keys()])
+        return len(rows)
 
     def authenticate(self, username, password):
         row = self.conn.execute(
@@ -1156,6 +1345,7 @@ class DB:
             raise ValueError("كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل")
         self.conn.execute("UPDATE users SET password_hash=? WHERE username=?",
                           (_hash(new_password), username))
+        self._audit_row(self.actor or username, "password_changed", username, entity="user", entity_id=username)
         self.conn.commit()
 
     def create_user(self, username, password, role, full_name="", branch_id=None):
@@ -1172,6 +1362,8 @@ class DB:
         c.execute(
             "INSERT INTO users (username, password_hash, role, full_name, branch_id) VALUES (?,?,?,?,?)",
             (username.strip(), _hash(password), role, full_name.strip(), branch_id))
+        self._audit_row(self.actor, "create_user", username.strip(), entity="user", entity_id=username.strip(),
+                        after={"role": role, "branch_id": branch_id})
         self.conn.commit()
         return c.lastrowid
 
@@ -1390,6 +1582,11 @@ class DB:
         drug_id = c.lastrowid
         if fields.get("barcode"):
             self._link_barcode_checked(c, fields["barcode"], drug_id)
+        if _commit and not getattr(self, "_cloud_mute", False):
+            self._audit_row(self.actor, "add_drug", "drug %s %s" % (drug_id, fields["trade_en"]),
+                            entity="drug", entity_id=drug_id,
+                            after={"name": fields["trade_en"], "buy_price": fields.get("buy_price", 0),
+                                   "sell_price": fields.get("sell_price", 0)})
         if _commit:
             self.conn.commit()
             self._cloud_push_async(drug_id)
@@ -1398,6 +1595,7 @@ class DB:
     @_atomic
     def update_drug(self, drug_id, fields, _commit=True):
         self._validate_drug_fields(fields)
+        _old = self.conn.execute("SELECT * FROM drugs WHERE id=?", (drug_id,)).fetchone()
         self.conn.execute(
             """UPDATE drugs SET trade_en=?, trade_ar=?, scientific=?, company=?,
             form=?, strength=?, category=?, strips_per_box=?, tablets_per_strip=?,
@@ -1409,6 +1607,17 @@ class DB:
              float(fields.get("sell_price", 0)), int(fields.get("min_stock", 5)),
              (fields.get("discount_type") or "none"),
              float(fields.get("discount_value") or 0), drug_id))
+        if _commit and _old is not None and not getattr(self, "_cloud_mute", False):
+            _watch = ("trade_en", "trade_ar", "scientific", "company", "form", "strength", "category",
+                      "strips_per_box", "tablets_per_strip", "buy_price", "sell_price", "min_stock",
+                      "discount_type", "discount_value")
+            _new = self.conn.execute("SELECT * FROM drugs WHERE id=?", (drug_id,)).fetchone()
+            _b = {k: _old[k] for k in _watch if _old[k] != _new[k]}
+            _a = {k: _new[k] for k in _b}
+            if _b:
+                self._audit_row(self.actor, "edit_drug",
+                                "drug %s: %s" % (drug_id, ", ".join(sorted(_b))),
+                                entity="drug", entity_id=drug_id, before=_b, after=_a)
         if _commit:
             self.conn.commit()
             self._cloud_push_async(drug_id)
@@ -1523,6 +1732,9 @@ class DB:
             """INSERT INTO stock_movements (drug_id, batch_id, qty_units, kind, ref, user, created_at)
             VALUES (?,?,?,?,?,?,?)""",
             (drug_id, batch_id, qty_units_delta, "adjust", reason, user, _now()))
+        self._audit_row(user, "adjust_stock", "drug %s delta %d (%s)" % (drug_id, qty_units_delta, reason),
+                        entity="drug", entity_id=drug_id,
+                        after={"delta_units": qty_units_delta, "reason": reason, "batch_no": batch_no or ""})
         self.conn.commit()
 
     def low_stock(self):
@@ -1766,6 +1978,12 @@ class DB:
         if payment_method == "credit" and customer_id:
             c.execute("UPDATE customers SET balance=balance+? WHERE id=?",
                       (_round(total - paid), customer_id))
+        self._audit_row(cashier, "sale", "%s total %.2f pay=%s" % (invoice_no, total, payment_method),
+                        entity="sale", entity_id=sale_id,
+                        after={"invoice": invoice_no, "total": total, "discount": _round(discount),
+                               "paid": _round(paid), "payment": payment_method,
+                               "customer_id": customer_id, "lines": len(lines), "via": source or "pc"},
+                        branch_id=sale_branch, shift_id=shift_id)
         self.conn.commit()
         try:
             self._invoice_bump(int(invoice_no[4:]))
@@ -2019,10 +2237,12 @@ class DB:
              _cash_refund(sale), reason or ""))
         # v6.19: every void is audit-logged inside the SAME transaction
         # (PC dialog, invoices list, mobile delete button — all callers).
-        c.execute(
-            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
-            (user or "", "return_sale",
-             sale["invoice_no"] + ((" — " + reason) if reason else ""), _now()))
+        self._audit_row(user, "return_sale",
+                        sale["invoice_no"] + ((" — " + reason) if reason else ""),
+                        entity="sale", entity_id=sale_id,
+                        before={"status": sale["status"], "total": sale["total"]},
+                        after={"status": "returned", "refund": _cash_refund(sale), "reason": reason or ""},
+                        branch_id=sale["branch_id"], shift_id=return_shift_id if return_shift_id else _AUTO)
         self.conn.commit()
 
     def sale_returns_for_shift(self, shift_id):
@@ -2160,14 +2380,17 @@ class DB:
         # audit inside the same transaction (no commit here)
         old_desc = "; ".join("%s x%s" % (it["drug_id"], it["qty_display"]) for it in old_lines)
         new_desc = "; ".join("%s(%s) x%s" % (d["trade_en"], pl, qd) for d, pl, qd, _u, _p, _t, _ld in lines)
-        c.execute(
-            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
-            (user or "", "edit_sale",
-             "%s: %s -> %s | فرق: %s | قديم: %s | جديد: %s%s%s" % (
-                 sale["invoice_no"], _round(old_total), total,
-                 _round(total - old_total), old_desc, new_desc,
-                 (" | حُذف نهائياً: " + "; ".join(_removed)) if _removed else "",
-                 (" | قُلّلت كميته: " + "; ".join(_reduced)) if _reduced else ""), _now()))
+        self._audit_row(
+            user, "edit_sale",
+            "%s: %s -> %s | فرق: %s | قديم: %s | جديد: %s%s%s" % (
+                sale["invoice_no"], _round(old_total), total,
+                _round(total - old_total), old_desc, new_desc,
+                (" | حُذف نهائياً: " + "; ".join(_removed)) if _removed else "",
+                (" | قُلّلت كميته: " + "; ".join(_reduced)) if _reduced else ""),
+            entity="sale", entity_id=sale_id,
+            before={"total": _round(old_total), "lines": old_desc},
+            after={"total": total, "lines": new_desc},
+            branch_id=sale["branch_id"])
         self.conn.commit()
         return {"sale_id": sale_id, "invoice_no": sale["invoice_no"],
                 "old_total": old_total, "new_total": total,
@@ -2270,6 +2493,8 @@ class DB:
         c = self.conn.cursor()
         c.execute("INSERT INTO suppliers (name, phone, address, created_at) VALUES (?,?,?,?)",
                   (name.strip(), phone, address, _now()))
+        self._audit_row(self.actor, "add_supplier", name.strip(), entity="supplier", entity_id=c.lastrowid,
+                        after={"name": name.strip()})
         self.conn.commit()
         return c.lastrowid
 
@@ -2377,6 +2602,11 @@ class DB:
         if paid < total:
             c.execute("UPDATE suppliers SET balance=balance+? WHERE id=?",
                       (_round(total - paid), supplier_id))
+        self._audit_row(user, "purchase", "purchase %s total %.2f supplier %s" % (purchase_id, total, supplier_id),
+                        entity="purchase", entity_id=purchase_id,
+                        after={"total": _round(total), "paid": _round(paid), "supplier_id": supplier_id,
+                               "lines": len(items), "invoice": invoice_no},
+                        branch_id=pur_branch)
         self.conn.commit()
         return purchase_id, _round(total)
 
@@ -2400,10 +2630,10 @@ class DB:
         # v5.0: money move + audit in ONE transaction (was two).
         self.conn.execute("UPDATE suppliers SET balance=balance-? WHERE id=?",
                           (amount, supplier_id))
-        self.conn.execute(
-            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
-            (user or "", "supplier_payment",
-             "supplier %s paid %.2f" % (supplier_id, amount), _now()))
+        self._audit_row(user, "supplier_payment", "supplier %s paid %.2f" % (supplier_id, amount),
+                        entity="supplier", entity_id=supplier_id,
+                        before={"balance": float(row["balance"] or 0)},
+                        after={"balance": _round(float(row["balance"] or 0) - amount), "paid": amount})
         self.conn.commit()
 
     @_atomic
@@ -2518,6 +2748,8 @@ class DB:
         c.execute(
             "INSERT INTO customers (name, phone, credit_limit, notes, created_at, branch_id) VALUES (?,?,?,?,?,?)",
             (name.strip(), phone, float(credit_limit), notes, _now(), self._wb()))
+        self._audit_row(self.actor, "add_customer", "customer %s" % c.lastrowid, entity="customer",
+                        entity_id=c.lastrowid, after={"name": name.strip(), "credit_limit": float(credit_limit)})
         self.conn.commit()
         return c.lastrowid
 
@@ -2560,10 +2792,10 @@ class DB:
             "INSERT INTO customer_payments (customer_id, amount, user, created_at, branch_id) VALUES (?,?,?,?,?)",
             (customer_id, amount, user, _now(),
              self.scope_branch if (self.scope_branch is not None and self.scope_branch >= 0) else None))
-        self.conn.execute(
-            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
-            (user or "", "customer_payment",
-             "customer %s paid %.2f" % (customer_id, amount), _now()))
+        self._audit_row(user, "customer_payment", "customer %s paid %.2f" % (customer_id, amount),
+                        entity="customer", entity_id=customer_id,
+                        before={"balance": float(row["balance"] or 0)},
+                        after={"balance": _round(float(row["balance"] or 0) - amount), "paid": amount})
         self.conn.commit()
 
     def customer_history(self, customer_id):
@@ -2607,6 +2839,8 @@ class DB:
         shift_id = c.lastrowid
         c.execute("INSERT INTO shift_members (shift_id, username, joined_at) VALUES (?,?,?)",
                   (shift_id, cashier, _now()))
+        self._audit_row(cashier, "open_shift", "shift %s" % shift_id, entity="shift", entity_id=shift_id,
+                        after={"opening_float": opening_float}, branch_id=bid, shift_id=shift_id)
         self.conn.commit()
         return shift_id
 
@@ -2631,6 +2865,8 @@ class DB:
             raise ValueError("لا توجد وردية مفتوحة في فرعك لتنضم إليها")
         self.conn.execute("INSERT OR IGNORE INTO shift_members (shift_id, username, joined_at) VALUES (?,?,?)",
                           (sh["id"], username, _now()))
+        self._audit_row(username, "join_shift", "shift %s" % sh["id"], entity="shift", entity_id=sh["id"],
+                        branch_id=sh.get("branch_id"), shift_id=sh["id"])
         self.conn.commit()
         return sh["id"]
 
@@ -2769,6 +3005,8 @@ class DB:
             raise ValueError("لست مشتركاً في وردية مفتوحة")
         self.conn.execute("DELETE FROM shift_members WHERE shift_id=? AND username=?",
                           (sh["id"], username))
+        self._audit_row(username, "leave_shift", "shift %s" % sh["id"], entity="shift", entity_id=sh["id"],
+                        branch_id=sh.get("branch_id"), shift_id=sh["id"])
         self.conn.commit()
         if check_out and self.attendance_open_for(username):
             self.check_out(username)
@@ -2800,6 +3038,18 @@ class DB:
              _round(counted_cash - summ["expected_cash"]), shift_id))
         if cur.rowcount == 0:
             raise ValueError("الوردية غير موجودة أو مغلقة بالفعل")
+        self._audit_row(actor or self.actor, "close_shift",
+                        "shift %s expected %.2f counted %.2f diff %.2f" % (
+                            shift_id, summ["expected_cash"], counted_cash,
+                            _round(counted_cash - summ["expected_cash"])),
+                        entity="shift", entity_id=shift_id,
+                        before={"status": "open"},
+                        after={"status": "closed", "expected_cash": summ["expected_cash"],
+                               "counted_cash": _round(counted_cash),
+                               "difference": _round(counted_cash - summ["expected_cash"])},
+                        branch_id=(self.conn.execute(
+                            "SELECT branch_id FROM shifts WHERE id=?", (shift_id,)).fetchone() or [None])[0],
+                        shift_id=shift_id)
         self.conn.commit()
         summ["counted_cash"] = _round(counted_cash)
         summ["difference"] = _round(counted_cash - summ["expected_cash"])
@@ -2817,6 +3067,9 @@ class DB:
         self.conn.execute(
             "INSERT INTO expenses (date, kind, amount, notes, user, shift_id, branch_id) VALUES (?,?,?,?,?,?,?)",
             (_today(), kind.strip(), amount, notes, user, shift_id, self._wb()))
+        self._audit_row(user, "expense", "%s %.2f" % (kind.strip(), amount), entity="expense",
+                        after={"kind": kind.strip(), "amount": amount, "notes": notes},
+                        shift_id=shift_id if shift_id is not None else _AUTO)
         self.conn.commit()
 
     def expenses_on(self, day=None):
@@ -3027,10 +3280,9 @@ class DB:
             else:
                 self.add_drug(fields, _commit=False)
                 added += 1
-        self.conn.execute(
-            "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
-            (user or "", "import_drugs",
-             "added %d updated %d from %s" % (added, updated, path), _now()))
+        self._audit_row(user, "import_drugs",
+                        "added %d updated %d from %s" % (added, updated, os.path.basename(str(path))),
+                        entity="drug", after={"added": added, "updated": updated})
         self.conn.commit()
         return added, updated
 
