@@ -735,7 +735,21 @@ class DB:
 
     def _migrate_roles_branches(self):
         """Additive only: branches, attendance, users.branch_id, shifts.branch_id.
-        Existing rows keep branch_id NULL (= no branch)."""
+        Existing rows keep branch_id NULL (= no branch).
+        Before the FIRST time the columns are added, an integrity-checked
+        copy of the database is saved in backups/ as *_pre_migration_branches.db
+        (kept forever, never pruned). That file is the supported rollback:
+        restore it (Settings > restore) together with the previous program
+        version. Running the old program on a migrated database is only
+        compatible, not safe once several branches are in use."""
+        try:
+            had = [r[1] for r in self.conn.execute("PRAGMA table_info(sales)").fetchall()]
+            has_data = self.conn.execute("SELECT 1 FROM drugs LIMIT 1").fetchone() or \
+                self.conn.execute("SELECT 1 FROM sales LIMIT 1").fetchone()
+            if "branch_id" not in had and has_data and self.path not in (":memory:", ""):
+                self.backup("_pre_migration_branches")
+        except Exception:
+            pass
         self.conn.execute("""CREATE TABLE IF NOT EXISTS shift_members (
             shift_id INTEGER NOT NULL, username TEXT NOT NULL, joined_at TEXT DEFAULT '',
             PRIMARY KEY (shift_id, username))""")
@@ -751,7 +765,7 @@ class DB:
             username TEXT NOT NULL, branch_id INTEGER,
             check_in TEXT NOT NULL, check_out TEXT DEFAULT '',
             note TEXT DEFAULT '', created_by TEXT DEFAULT '')""")
-        for table in ("batches", "sales", "expenses", "purchases", "stock_movements"):
+        for table in ("batches", "sales", "expenses", "purchases", "stock_movements", "customer_payments"):
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
             if "branch_id" not in cols:
                 self.conn.execute("ALTER TABLE %s ADD COLUMN branch_id INTEGER" % table)
@@ -858,7 +872,7 @@ class DB:
             raise ValueError("يوجد فرع بنفس الاسم")
         if first:
             # all existing stock / sales / expenses / purchases / shifts belong to the first branch
-            for t in ("batches", "sales", "expenses", "purchases", "stock_movements", "shifts"):
+            for t in ("batches", "sales", "expenses", "purchases", "stock_movements", "shifts", "customer_payments"):
                 self.conn.execute("UPDATE %s SET branch_id=? WHERE branch_id IS NULL" % t, (c.lastrowid,))
         self.conn.commit()
         return c.lastrowid
@@ -2525,8 +2539,9 @@ class DB:
         # v5.7: also write the payments ledger row so the payment
         # shows up in the customer's history.
         self.conn.execute(
-            "INSERT INTO customer_payments (customer_id, amount, user, created_at) VALUES (?,?,?,?)",
-            (customer_id, amount, user, _now()))
+            "INSERT INTO customer_payments (customer_id, amount, user, created_at, branch_id) VALUES (?,?,?,?,?)",
+            (customer_id, amount, user, _now(),
+             self.scope_branch if (self.scope_branch is not None and self.scope_branch >= 0) else None))
         self.conn.execute(
             "INSERT INTO audit_log (user, action, details, created_at) VALUES (?,?,?,?)",
             (user or "", "customer_payment",
@@ -2537,10 +2552,10 @@ class DB:
         # v5.7: sales AND payments in one history (payments used to
         # be invisible — only in audit_log free text).
         rows = [dict(r) for r in self.conn.execute(
-            "SELECT * FROM sales WHERE customer_id=? ORDER BY id DESC LIMIT 50",
+            "SELECT * FROM sales WHERE customer_id=?" + self._ssql() + " ORDER BY id DESC LIMIT 50",
             (customer_id,)).fetchall()]
         pays = self.conn.execute(
-            "SELECT amount, created_at FROM customer_payments WHERE customer_id=? ORDER BY id DESC",
+            "SELECT amount, created_at FROM customer_payments WHERE customer_id=?" + self._esql() + " ORDER BY id DESC",
             (customer_id,)).fetchall()
         for p in pays:
             rows.append({"invoice_no": "💰 سداد", "date": (p["created_at"] or "")[:10],
@@ -2716,12 +2731,38 @@ class DB:
             (cashier,)).fetchone()
         return dict(row) if row else None
 
-    def close_shift(self, shift_id, counted_cash=None):
+    def can_close_shift(self, shift_id, actor):
+        """Admin, or the employee who opened the shift. Other members can
+        only leave it."""
+        row = self.conn.execute("SELECT cashier FROM shifts WHERE id=?", (shift_id,)).fetchone()
+        if not row:
+            return False
+        return self.user_role(actor) == "admin" or row["cashier"] == actor
+
+    def leave_shift(self, username, check_out=True):
+        """A member leaves the shared shift without closing it for the others.
+        Records the person's own departure (attendance check-out) if one is open."""
+        sh = self.open_shift_for(username)
+        if not sh:
+            raise ValueError("لست مشتركاً في وردية مفتوحة")
+        members = self.shift_members(sh["id"])
+        if len(members) <= 1:
+            raise ValueError("أنت آخر موظف في الوردية، أغلقها بدل المغادرة")
+        self.conn.execute("DELETE FROM shift_members WHERE shift_id=? AND username=?",
+                          (sh["id"], username))
+        self.conn.commit()
+        if check_out and self.attendance_open_for(username):
+            self.check_out(username)
+        return sh["id"]
+
+    def close_shift(self, shift_id, counted_cash=None, actor=None):
         """v5.7: closes only an open shift (double-close and closing
         a ghost shift used to be silent no-ops). counted_cash is the
         cash the cashier actually counted; expected/difference are
         computed from shift_summary() and stored for the audit trail.
         Returns the summary dict."""
+        if actor is not None and not self.can_close_shift(shift_id, actor):
+            raise PermissionError("إغلاق الوردية للمدير أو للموظف الذي فتحها فقط")
         if counted_cash is None:
             raise ValueError("أدخل المبلغ الذي عدّدته في الدرج")
         try:
