@@ -162,5 +162,10 @@ class EmployeeMobile(unittest.TestCase):
         with self.assertRaises(ValueError):db.create_user('mobile','test-password','cashier')
         db.close()
 
+    def test_employee_cannot_add_drug_from_phone(self):
+        body=dict(trade_en='PhoneAdd',sell_price=10,buy_price=5,strips_per_box=1,tablets_per_strip=1,barcode='9990001112223')
+        self.assertEqual(self.request('POST','/api/drugs',body,self.tokens['alice'])[0],403)
+        self.assertNotEqual(self.request('POST','/api/drugs',body,self.tokens['manager'])[0],403)
+
 if __name__=='__main__':
     unittest.main()
