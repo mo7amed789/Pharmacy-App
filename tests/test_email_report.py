@@ -203,6 +203,29 @@ class EmailReport(unittest.TestCase):
         ER.tick(self.db, now=t + 7 * 3600, context=self.ctx)
         self.assertIn("after_restore", "\n".join(self.srv.mails))
 
+    def test_api_mode_posts_over_verified_https_and_refuses_http(self):
+        import http.server
+        got = []
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(h):
+                got.append((h.headers.get("Authorization"), json.loads(h.rfile.read(int(h.headers["Content-Length"])))))
+                h.send_response(200); h.end_headers(); h.wfile.write(b"{}")
+            def log_message(h, *a): pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); c.load_cert_chain(self.cert, self.key)
+        srv.socket = c.wrap_socket(srv.socket, server_side=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = {"mode": "api", "sender": "onboarding@resend.dev", "to": "owner@example.com"}
+        json.dump({"mail_report": dict(base, url="https://127.0.0.1:%d/emails" % srv.server_port)}, open(self.cfgfile, "w"))
+        cfg = ER.load_email_cfg()
+        ER.send_mail(cfg, "KEY-1", "s", "body", context=self.ctx)
+        self.assertEqual(got[0][0], "Bearer KEY-1"); self.assertEqual(got[0][1]["to"], ["owner@example.com"])
+        with self.assertRaises(ER.EmailError):      # default trust store does not know the test cert
+            ER.send_mail(cfg, "KEY-1", "s", "body")
+        srv.shutdown()
+        json.dump({"mail_report": dict(base, url="http://api.resend.com/emails")}, open(self.cfgfile, "w"))
+        self.assertIsNone(ER.load_email_cfg())
+
     def test_email_only_config_never_contacts_supabase(self):
         json.dump({"mail_report": {"host": "localhost", "port": self.srv.port, "mode": "ssl", "username": "resend",
                                    "sender": "onboarding@resend.dev", "to": "owner@example.com"}}, open(self.cfgfile, "w"))
