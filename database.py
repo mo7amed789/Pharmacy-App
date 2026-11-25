@@ -2586,10 +2586,11 @@ class DB:
         c.execute(
             "INSERT INTO shifts (cashier, opened_at, opening_float, status, branch_id) VALUES (?,?,?,?,?)",
             (cashier, _now(), opening_float, "open", bid))
+        shift_id = c.lastrowid
         c.execute("INSERT INTO shift_members (shift_id, username, joined_at) VALUES (?,?,?)",
-                  (c.lastrowid, cashier, _now()))
+                  (shift_id, cashier, _now()))
         self.conn.commit()
-        return c.lastrowid
+        return shift_id
 
     def open_branch_shift(self, branch_id):
         """The open shift (shared drawer) of a branch, or None."""
@@ -2741,13 +2742,13 @@ class DB:
 
     def leave_shift(self, username, check_out=True):
         """A member leaves the shared shift without closing it for the others.
-        Records the person's own departure (attendance check-out) if one is open."""
+        Records the person's own departure (attendance check-out) if one is open.
+        Any member may leave, including the last one: leaving never needs the
+        authority to close. A shift left with no members stays open until the
+        opener or an admin closes it (others can still join it)."""
         sh = self.open_shift_for(username)
         if not sh:
             raise ValueError("لست مشتركاً في وردية مفتوحة")
-        members = self.shift_members(sh["id"])
-        if len(members) <= 1:
-            raise ValueError("أنت آخر موظف في الوردية، أغلقها بدل المغادرة")
         self.conn.execute("DELETE FROM shift_members WHERE shift_id=? AND username=?",
                           (sh["id"], username))
         self.conn.commit()
