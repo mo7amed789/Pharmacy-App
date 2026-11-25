@@ -1439,7 +1439,9 @@ def _make_handler(db_path, req_log=None):
             if not self._require_pin():
                 return
             emp = getattr(self, "employee", None)
-            if emp and emp.get("role") != "admin":  # same rule as the desktop add-drug button
+            # admin accounts only: employees AND the legacy shared PIN (no account, no role) are refused,
+            # same rule as the desktop add-drug button
+            if not emp or emp.get("role") != "admin":
                 self._send_json(403, {"error": "إضافة الأصناف للمدير فقط"})
                 return
             try:
