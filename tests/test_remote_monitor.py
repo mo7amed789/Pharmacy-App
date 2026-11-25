@@ -172,6 +172,21 @@ class RemoteMonitor(unittest.TestCase):
         self.assertEqual(st["enabled"], 1)  # restore does not turn monitoring off
         self.assertTrue([r for r in self.db.system_log_query(component="remote_monitor") if r["event"] == "generation_change"])
 
+    def test_restore_event_in_same_second_as_last_upload_is_not_lost(self):
+        RM.enable(self.db)
+        for i in range(3):
+            self.db.audit("boss", "old_%d" % i, "x")
+        RM.sync_once(self.db)
+        self.db.conn.execute("DROP TRIGGER IF EXISTS trg_audit_log_no_delete")
+        self.db.conn.execute("DELETE FROM audit_log"); self.db.conn.execute("DELETE FROM sqlite_sequence WHERE name='audit_log'")
+        # same created_at second as the last uploaded event, lower id than the cursor
+        self.db.conn.commit()
+        ts = RM.load_state(self.db)["a_ts"]
+        self.db.conn.execute("INSERT INTO audit_log (created_at,user,action,details) VALUES (?,?,?,?)", (ts, "boss", "same_second", ""))
+        self.db.conn.commit()
+        RM.sync_once(self.db)
+        self.assertIn("same_second", self._acts())
+
     def test_reused_ids_with_same_max_id_detected_by_fingerprint(self):
         RM.enable(self.db)
         self.db.audit("boss", "orig", "x")
