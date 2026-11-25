@@ -6523,7 +6523,8 @@ class App:
 
     def remote_enable(self):
         import remote_monitor
-        if remote_monitor.load_config() is None:
+        import email_report as _er
+        if remote_monitor.load_config() is None and _er.load_email_cfg() is None:
             messagebox.showerror("المتابعة عن بعد", "ملف remote_monitor.json غير موجود أو ناقص، لن يُرسل شيء.")
             return
         pv, txt = self._remote_preview_text()
