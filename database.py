@@ -774,7 +774,7 @@ class DB:
             AFTER INSERT ON stock_movements WHEN NEW.batch_id IS NOT NULL
             BEGIN UPDATE stock_movements SET branch_id=
               (SELECT branch_id FROM batches WHERE id=NEW.batch_id) WHERE id=NEW.id; END""")
-        for table in ("users", "shifts"):
+        for table in ("users", "shifts", "customers"):
             cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
             if "branch_id" not in cols:
                 self.conn.execute("ALTER TABLE %s ADD COLUMN branch_id INTEGER" % table)
@@ -804,6 +804,13 @@ class DB:
                 bid = -1
             return bid, (username if own_only else None)
         return bid, None
+
+    def _check_customer_branch(self, row):
+        """A customer (and balance) belongs to one branch; a scoped user
+        cannot use another branch's customer. branch NULL = shared walk-in."""
+        sb = self.scope_branch
+        if sb is not None and row["branch_id"] is not None and row["branch_id"] != sb:
+            raise ValueError("العميل غير موجود")
 
     def _bsql(self, a=""):
         if self.scope_branch is None:
@@ -874,6 +881,10 @@ class DB:
             # all existing stock / sales / expenses / purchases / shifts belong to the first branch
             for t in ("batches", "sales", "expenses", "purchases", "stock_movements", "shifts", "customer_payments"):
                 self.conn.execute("UPDATE %s SET branch_id=? WHERE branch_id IS NULL" % t, (c.lastrowid,))
+            # customers (and their balances) belong to a branch too; the
+            # shared walk-in customer stays global
+            self.conn.execute("UPDATE customers SET branch_id=? WHERE branch_id IS NULL AND name<>?",
+                              (c.lastrowid, "عميل نقدي"))
         self.conn.commit()
         return c.lastrowid
 
@@ -1637,10 +1648,11 @@ class DB:
         within the credit limit (limit 0 = unlimited, as before)."""
         if not customer_id:
             raise ValueError("البيع الآجل يحتاج عميل مسجل")
-        row = self.conn.execute("SELECT id, balance, credit_limit FROM customers WHERE id=?",
+        row = self.conn.execute("SELECT id, balance, credit_limit, branch_id FROM customers WHERE id=?",
                                 (customer_id,)).fetchone()
         if not row:
             raise ValueError("العميل غير موجود")
+        self._check_customer_branch(row)
         limit = float(row["credit_limit"] or 0)
         if limit > 0:
             base = float(row["balance"] or 0)
@@ -2504,19 +2516,24 @@ class DB:
             raise ValueError("حد الائتمان لا يمكن أن يكون سالباً")
         c = self.conn.cursor()
         c.execute(
-            "INSERT INTO customers (name, phone, credit_limit, notes, created_at) VALUES (?,?,?,?,?)",
-            (name.strip(), phone, float(credit_limit), notes, _now()))
+            "INSERT INTO customers (name, phone, credit_limit, notes, created_at, branch_id) VALUES (?,?,?,?,?,?)",
+            (name.strip(), phone, float(credit_limit), notes, _now(), self._wb()))
         self.conn.commit()
         return c.lastrowid
+
+    def _cbsql(self):
+        if self.scope_branch is None:
+            return ""
+        return " AND (branch_id IS NULL OR branch_id=%d)" % self.scope_branch
 
     def customers(self, query=""):
         if query.strip():
             q = "%" + query.strip() + "%"
             rows = self.conn.execute(
-                "SELECT * FROM customers WHERE name LIKE ? OR phone LIKE ? ORDER BY name",
+                "SELECT * FROM customers WHERE (name LIKE ? OR phone LIKE ?)" + self._cbsql() + " ORDER BY name",
                 (q, q)).fetchall()
         else:
-            rows = self.conn.execute("SELECT * FROM customers ORDER BY name").fetchall()
+            rows = self.conn.execute("SELECT * FROM customers WHERE 1=1" + self._cbsql() + " ORDER BY name").fetchall()
         return [dict(r) for r in rows]
 
     @_atomic
@@ -2527,10 +2544,11 @@ class DB:
             raise ValueError("مبلغ غير صالح")
         if amount <= 0:
             raise ValueError("المبلغ يجب أن يكون أكبر من صفر")
-        row = self.conn.execute("SELECT balance FROM customers WHERE id=?",
+        row = self.conn.execute("SELECT balance, branch_id FROM customers WHERE id=?",
                                 (customer_id,)).fetchone()
         if not row:
             raise ValueError("العميل غير موجود")
+        self._check_customer_branch(row)
         if amount > float(row["balance"] or 0):
             raise ValueError("المبلغ أكبر من الدين المستحق (%.2f ج.م)" % float(row["balance"] or 0))
         # v5.0: money move + audit in ONE transaction (was two).
