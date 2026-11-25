@@ -84,5 +84,88 @@ class RolesBranches(unittest.TestCase):
         DB(path=path)
 
 
+    def test_shared_shift_many_employees(self):
+        bid = self.db.add_branch("boss", "Main")
+        for u in ("emp1", "emp2"):
+            self.db.set_user_branch("boss", u, bid)
+        sid = self.db.open_shift("emp1", 100)
+        with self.assertRaises(ValueError):
+            self.db.open_shift("emp2", 0)  # one shared drawer per branch
+        self.assertEqual(self.db.join_shift("emp2"), sid)
+        self.assertEqual(self.db.open_shift_for("emp2")["id"], sid)
+        self.assertEqual([m["username"] for m in self.db.shift_members(sid)], ["emp1", "emp2"])
+        # attendance stays individual
+        self.db.check_in("emp1")
+        self.assertIsNone(self.db.attendance_open_for("emp2"))
+        self.assertIsNotNone(self.db.attendance_open_for("emp1"))
+        summ = self.db.shift_summary(sid)
+        self.assertEqual(summ["members"], ["emp1", "emp2"])
+
+    def test_employee_cannot_void_or_edit_invoice(self):
+        with self.assertRaises(PermissionError):
+            self.db.return_sale(1, "emp1")
+        with self.assertRaises(PermissionError):
+            self.db.edit_sale(1, "emp1", [])
+
+    def _drug(self, name="D1"):
+        did = self.db.add_drug({"trade_en": name, "trade_ar": "ت", "scientific": "x", "company": "x",
+                                "form": "Tabs", "strength": "1", "category": "t", "strips_per_box": 1,
+                                "tablets_per_strip": 10, "buy_price": 5, "sell_price": 10,
+                                "min_stock": 1, "barcode": ""})
+        return self.db.get_drug(did)
+
+    def _stock(self, drug_id, qty, branch):
+        self.db.conn.execute(
+            "INSERT INTO batches (drug_id, batch_no, expiry, qty_units, buy_price_unit, created_at, branch_id) "
+            "VALUES (?,?,?,?,?,?,?)", (drug_id, "B", "2099-01-01", qty, 0.5, "2026-01-01", branch))
+        self.db.conn.commit()
+
+    def _items(self, d, q=1):
+        return [{"drug": d, "pack_level": "box", "qty_display": q}]
+
+    def test_branch_stock_sales_reports_are_separate(self):
+        d = self._drug()
+        self._stock(d["id"], 20, None)               # legacy stock, no branch yet
+        a = self.db.add_branch("boss", "A")          # first branch adopts legacy stock
+        b = self.db.add_branch("boss", "B")
+        self.assertEqual(self.db.conn.execute("SELECT branch_id FROM batches").fetchone()[0], a)
+        self._stock(d["id"], 10, b)
+        self.db.set_scope(a)
+        self.assertEqual(self.db.get_drug(d["id"]).get("stock_units"), 20)
+        self.db.set_scope(b)
+        self.assertEqual(self.db.sellable_stock(d["id"]), 10)
+        self.db.create_sale("boss", self._items(d, 1), payment_method="cash", paid=10)   # 10 units from B
+        self.assertEqual(self.db.sellable_stock(d["id"]), 0)
+        with self.assertRaises(ValueError):
+            self.db.create_sale("boss", self._items(d, 1))   # B is empty; A's stock must not be used
+        self.db.set_scope(a)
+        self.assertEqual(self.db.sellable_stock(d["id"]), 20)
+        self.assertEqual(self.db.report_daily()["count"], 0)
+        self.db.set_scope(b)
+        self.assertEqual(self.db.report_daily()["count"], 1)
+        self.db.set_scope(None)                       # admin sees all
+        self.assertEqual(self.db.report_daily()["count"], 1)
+        self.assertEqual(self.db.sellable_stock(d["id"]), 20)
+        with self.assertRaises(ValueError):           # two branches: admin must choose one to write
+            self.db.add_expense("x", 5, user="boss")
+        # return restocks the sale's own branch
+        sid = self.db.conn.execute("SELECT id FROM sales").fetchone()[0]
+        self.db.return_sale(sid, "boss")
+        self.db.set_scope(b)
+        self.assertEqual(self.db.sellable_stock(d["id"]), 10)
+
+    def test_employee_sees_only_own_sales(self):
+        d = self._drug()
+        a = self.db.add_branch("boss", "A")
+        self._stock(d["id"], 50, a)
+        self.db.set_scope(a)
+        self.db.create_sale("emp1", self._items(d, 1), payment_method="cash", paid=10)
+        self.db.create_sale("emp2", self._items(d, 2), payment_method="cash", paid=20)
+        self.db.set_scope(a, user="emp1")
+        self.assertEqual(self.db.report_daily()["total"], 10)
+        self.assertEqual([x["cashier"] for x in self.db.sales_on()], ["emp1"])
+        self.db.set_scope(a)
+        self.assertEqual(self.db.report_daily()["total"], 30)
+
 if __name__ == "__main__":
     unittest.main()
