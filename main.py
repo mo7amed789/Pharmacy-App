@@ -2416,7 +2416,6 @@ class App:
         ttk.Button(top, text="➕ مورد جديد", command=self.add_supplier_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="💰 دفع للمورد المحدد", command=self.pay_supplier_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="↩️ مرتجع مشتريات", command=self.purchase_return_dialog).pack(side="left", padx=4)
-        ttk.Button(top, text="📷 من صورة فاتورة", command=self.invoice_photo_intake).pack(side="left", padx=4)
         ttk.Label(top, text="رقم فاتورة المورد:").pack(side="left", padx=(12, 2))
         self.e_pur_inv = ttk.Entry(top, width=14)
         self.e_pur_inv.pack(side="left")
@@ -2435,6 +2434,7 @@ class App:
             top2, text="💾 حفظ فاتورة الشراء وتحديث المخزون",
             command=self.pur_save)
         self.btn_pur_save_top.pack(side="left", padx=(0, 8))
+        ttk.Button(top2, text="📷 من صورة فاتورة", command=self.invoice_photo_intake).pack(side="left", padx=(0, 8))
         self.lbl_pur_total_top = ttk.Label(
             top2, text="إجمالي فاتورة الشراء: 0.00 ج.م", style="Total.TLabel")
         self.lbl_pur_total_top.pack(side="left")
