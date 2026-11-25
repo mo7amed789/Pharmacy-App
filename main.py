@@ -4185,8 +4185,6 @@ class App:
         ttk.Label(tab, text="⬇️ انزل لتحت لرؤية QR والفواتير",
                   font=("Segoe UI", 11, "bold"), foreground=self.pal["accent"]).pack(
                       anchor="w", padx=12, pady=(0, 2))
-        ttk.Label(tab, text="نفس الواي فاي — شبكة محلية فقط.",
-                  style="Muted.TLabel", wraplength=1100).pack(anchor="w", padx=12)
         # ---------- v5.4: Windows hotspot only ----------
         # v5.4: the whole app-owned "local Wi-Fi" card was removed at
         # the user's request — no SSID field, no password field, no
@@ -4223,9 +4221,7 @@ class App:
                    command=self.hotspot_open_settings).pack(side="left", padx=4)
         ttk.Button(hbtns, text="🔄 تحديث الحالة",
                    command=self.hotspot_refresh_async).pack(side="left", padx=4)
-        ttk.Label(hcard, text="1) شغّل الهوت سبوت  2) اتصل به من الموبايل  3) افتح الرابط  4) أدخل PIN.",
-                  wraplength=1100, style="Muted.TLabel").pack(anchor="w", pady=2)
-        ttk.Label(hcard, text="الرابط يتغير بعد التشغيل — حدّث القائمة.",
+        ttk.Label(hcard, text="1) شغّل الهوت سبوت  2) اتصل به من الموبايل  3) افتح الرابط  4) أدخل PIN.  (نفس الشبكة فقط؛ الرابط يتغير بعد التشغيل فحدّث القائمة)",
                   wraplength=1100, style="Muted.TLabel").pack(anchor="w", pady=2)
         # Server status card
         card = ttk.Frame(tab)
@@ -4272,8 +4268,6 @@ class App:
         # ---------- v4.1: ALL candidate URLs + diagnostics ----------
         ttk.Label(tab, text="🔗 الروابط — جرّب رابط شبكة هاتفك:",
                   style="Section.TLabel").pack(anchor="w", padx=12, pady=(8, 2))
-        ttk.Label(tab, text="الموبايل على نفس الشبكة المكتوبة.",
-                  style="Muted.TLabel", wraplength=1100).pack(anchor="w", padx=12)
         self.frame_mobile_urls = ttk.Frame(tab)
         self.frame_mobile_urls.pack(fill="x", padx=12, pady=2)
         self.txt_mobile_urls = tk.Text(self.frame_mobile_urls, width=90, height=3,
@@ -4458,6 +4452,14 @@ class App:
         except Exception:
             pass
         self._mobile_update_url_list()
+
+    def _help_btn(self, parent, title, text, **pack):
+        """v6.31: long explanations live behind a small "؟" button instead of
+        sitting on the page as paragraphs."""
+        b = ttk.Button(parent, text="؟ شرح", width=7,
+                       command=lambda: messagebox.showinfo(title, text, parent=self.root))
+        b.pack(**(pack or {"anchor": "w", "pady": 2}))
+        return b
 
     def _copy_text(self, text):
         try:
@@ -5415,8 +5417,6 @@ class App:
         ttk.Radiobutton(_theme_row, text="🌙 داكن", variable=self.var_theme, value="dark").pack(side="left", padx=4)
         ttk.Button(_theme_row, text="تطبيق المظهر",
                    command=lambda: self.apply_theme_now(self.var_theme.get())).pack(side="left", padx=8)
-        ttk.Label(f, text="يُحفظ اختيارك في قاعدة البيانات ويُطبق فوراً على معظم الشاشات.",
-                  style="Muted.TLabel").pack(anchor="w")
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         # ---------- v5.9: 🎨 التخصيص — every look choice in one place ----------
         ttk.Label(f, text="🎨 التخصيص:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -5451,8 +5451,6 @@ class App:
                        self.var_accent.get(), self.var_fontsize.get(),
                        [k for k, v in self.dash_card_vars.items() if v.get()],
                        self.var_alerts_top.get())).pack(anchor="w", pady=6)
-        ttk.Label(f, text="يُحفظ كل اختيار في قاعدة البيانات ويبقى بعد إعادة التشغيل — ويمكنك تغييره في أي وقت من هنا.",
-                  style="Muted.TLabel", wraplength=700).pack(anchor="w")
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(f, text="📱 الموبايل:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.lbl_settings_pin = ttk.Label(f, text="رمز الموبايل الحالي (PIN): —")
@@ -5462,8 +5460,7 @@ class App:
         except Exception:
             pass
         ttk.Button(f, text="🔑 تغيير رمز الموبايل", command=self.regenerate_mobile_pin_ui).pack(anchor="w", pady=4)
-        ttk.Label(f, text="من تبويب «الموبايل والطباعة» شغّل السيرفر، ثم افتح الرابط على الهاتف (نفس الواي فاي) وأدخل الرمز.",
-                  style="Muted.TLabel", wraplength=700).pack(anchor="w")
+        self._help_btn(f, "الموبايل", "من تبويب «الموبايل والطباعة» شغّل السيرفر، ثم افتح الرابط على الهاتف (نفس الواي فاي) وأدخل الرمز.")
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         # ---------- v5.10 (audit step 3): 🖨️ الطباعة ----------
         ttk.Label(f, text="🖨️ الطباعة:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -5499,12 +5496,11 @@ class App:
         self.e_cp1256 = ttk.Entry(_cprow, width=6)
         self.e_cp1256.pack(side="left", padx=4)
         self.e_cp1256.insert(0, str(_ps["cp1256"]))
-        ttk.Label(f, text="تُحفظ الإيصالات في مجلد receipts/ داخل مجلد البرنامج، وتُحذف الملفات الأقدم من 30 يوماً تلقائياً عند التشغيل والطباعة.",
-                  style="Muted.TLabel", wraplength=700).pack(anchor="w")
-        ttk.Label(f, text="الوضع الافتراضي هو طابعة ويندوز — لا يتغير شيء في التثبيتات الحالية. اختر ESC/POS فقط إذا كانت طابعتك حرارية متصلة مباشرة بهذا الكمبيوتر، وإذا فشلت الطباعة المباشرة يعود البرنامج تلقائياً لطابعة ويندوز ويخبرك.",
-                  style="Muted.TLabel", wraplength=700).pack(anchor="w")
-        ttk.Label(f, text="العربية في ESC/POS: تُشكَّل الحروف وتُرمَّز CP864 (حروف متصلة) فإن تعذّر تُستخدم Windows-1256 (حروف غير متصلة غالباً). رقما الصفحتين من صفحة الاختبار الذاتي للطابعة (اضغط FEED أثناء التشغيل) — أرقام Epson الافتراضية 37 و 50 وتختلف من ماركة لأخرى. إن ظهرت العربية مفككة أو كعلامات ؟ فالمشكلة في الطابعة نفسها لا في البرنامج.",
-                  style="Muted.TLabel", wraplength=700).pack(anchor="w")
+        ttk.Label(f, text="الافتراضي: طابعة ويندوز.", style="Muted.TLabel").pack(anchor="w")
+        self._help_btn(f, "إعدادات الطباعة",
+            "تُحفظ الإيصالات في مجلد receipts/ داخل مجلد البرنامج، وتُحذف الملفات الأقدم من 30 يوماً تلقائياً عند التشغيل والطباعة.\n\n\n\n"
+            "الوضع الافتراضي هو طابعة ويندوز — لا يتغير شيء في التثبيتات الحالية. اختر ESC/POS فقط إذا كانت طابعتك حرارية متصلة مباشرة بهذا الكمبيوتر، وإذا فشلت الطباعة المباشرة يعود البرنامج تلقائياً لطابعة ويندوز ويخبرك.\n\n"
+            "العربية في ESC/POS: تُشكَّل الحروف وتُرمَّز CP864 (حروف متصلة) فإن تعذّر تُستخدم Windows-1256 (حروف غير متصلة غالباً). رقما الصفحتين من صفحة الاختبار الذاتي للطابعة (اضغط FEED أثناء التشغيل) — أرقام Epson الافتراضية 37 و 50 وتختلف من ماركة لأخرى. إن ظهرت العربية مفككة أو كعلامات ؟ فالمشكلة في الطابعة نفسها لا في البرنامج.")
         ttk.Button(f, text="💾 حفظ إعدادات الطباعة", command=self.save_printer_settings).pack(anchor="w", pady=4)
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(f, text="الأمان:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
@@ -5553,12 +5549,13 @@ class App:
         self.lbl_update = ttk.Label(f, text=self._update_status_text(), style="Muted.TLabel",
                                     wraplength=700, justify="left")
         self.lbl_update.pack(anchor="w", pady=2)
-        ttk.Label(f, text="فحص تلقائي عند التشغيل وكل ساعة. لاحقاً يؤجل التنبيه 24 ساعة للتحديث نفسه؛ لا تثبيت دون اختيارك.", style="Muted.TLabel", wraplength=700).pack(anchor="w", pady=2)
+        ttk.Label(f, text="لا يتم تثبيت أي تحديث دون اختيارك.", style="Muted.TLabel").pack(anchor="w", pady=2)
         self._refresh_update_ui()
-        ttk.Label(f, text="البرنامج يفحص GitHub عند كل تشغيل، وعند وجود كود جديد يمكنك تثبيته من هنا. "
-                          "بياناتك (قاعدة البيانات والإعدادات والنسخ الاحتياطية) لا تتأثر بالتحديث أبداً، "
-                          "وبعد التثبيت أعد تشغيل البرنامج.",
-                  style="Muted.TLabel", wraplength=700, justify="left").pack(anchor="w", pady=2)
+        self._help_btn(f, "التحديثات",
+            "فحص تلقائي عند التشغيل وكل ساعة. لاحقاً يؤجل التنبيه 24 ساعة للتحديث نفسه؛ لا تثبيت دون اختيارك.\n\n"
+            "البرنامج يفحص GitHub عند كل تشغيل، وعند وجود كود جديد يمكنك تثبيته من هنا. "
+            "بياناتك (قاعدة البيانات والإعدادات والنسخ الاحتياطية) لا تتأثر بالتحديث أبداً، "
+            "وبعد التثبيت أعد تشغيل البرنامج.")
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         # ---------- v6.13: 🤖 المهام التلقائية ----------
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
