@@ -1091,6 +1091,24 @@ class App:
         inner.bind("<Configure>", _on_conf)
         canvas.bind("<Configure>", _on_conf)
 
+        # v6.31: a forced inner height hides later content growth (no <Configure>
+        # fires when only the *requested* height changes), which squeezed tables
+        # to nothing on short screens. Re-check the requested height cheaply.
+        _last = {"h": -1}
+
+        def _resync():
+            try:
+                if not canvas.winfo_exists():
+                    return
+                h = inner.winfo_reqheight()
+                if h != _last["h"]:
+                    _last["h"] = h
+                    _on_conf()
+                canvas.after(300, _resync)
+            except Exception:
+                pass
+        canvas.after(100, _resync)
+
         def _is_inside(widget):
             w = widget
             while w is not None:
@@ -1340,7 +1358,7 @@ class App:
         self.e_qty.insert(0, "1")
         ttk.Button(add_row, text="➕ إضافة للفاتورة", command=self.pos_add_selected,
                    style="Accent.TButton").pack(side="left", padx=10)
-        _sf, self.list_search = self.make_drug_search_tree(left, height=5)
+        _sf, self.list_search = self.make_drug_search_tree(left, height=3)
         _sf.pack(side="top", fill="both", expand=True)
         self.list_search.bind("<Double-Button-1>", lambda e: self.pos_add_selected())
         self.list_search.bind("<Return>", lambda e: self.pos_add_selected())
@@ -1351,7 +1369,7 @@ class App:
         btns = ttk.Frame(right)
         btns.pack(side="bottom", fill="x", pady=(8, 0))
         cols = ("name", "ar", "unit", "qty", "price", "disc", "total", "stock")
-        self.tree_cart = ttk.Treeview(right, columns=cols, show="headings", height=5)
+        self.tree_cart = ttk.Treeview(right, columns=cols, show="headings", height=3)
         for c, w in zip(cols, (110, 90, 50, 45, 70, 60, 75, 60)):
             self.tree_cart.heading(c, text={"name": "الدواء", "ar": "عربي", "unit": "الوحدة",
                                             "qty": "الكمية", "price": "سعر الوحدة",
