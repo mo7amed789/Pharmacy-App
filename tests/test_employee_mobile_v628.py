@@ -168,5 +168,25 @@ class EmployeeMobile(unittest.TestCase):
         self.assertNotEqual(self.request('POST','/api/drugs',body,self.tokens['manager'])[0],403)
         self.assertEqual(self.request('POST','/api/drugs',body,legacy=True)[0],403)  # legacy shared PIN has no role, so no add-drug
 
+    def test_customers_are_branch_scoped_on_phone(self):
+        db=DB(self.path,init=False)
+        a=db.add_branch('manager','A'); b=db.add_branch('manager','B')
+        db.set_user_branch('manager','alice',a); db.set_user_branch('manager','bob',b)
+        db.conn.execute('INSERT INTO batches (drug_id,batch_no,expiry,qty_units,buy_price_unit,created_at,branch_id) VALUES (?,?,?,?,?,?,?)',(self.did,'b2','2030-01-01',50,1,'2026-11-21',b))
+        db.set_scope(a); ca=db.add_customer('cust-A','1',0)
+        db.set_scope(b); cb=db.add_customer('cust-B','2',0)
+        db.conn.commit(); db.close()
+        names=lambda who: {c['name'] for c in self.request('GET','/api/customers',token=self.tokens[who])[1]['customers']}
+        self.assertIn('cust-A',names('alice')); self.assertNotIn('cust-B',names('alice'))
+        self.assertIn('cust-B',names('bob')); self.assertNotIn('cust-A',names('bob'))
+        r=self.sale('bob','x1',payment='credit',customer_id=ca)       # other branch's customer
+        self.assertNotEqual(r[0],200)
+        r=self.sale('bob','x2',payment='credit',customer_id=cb)
+        self.assertEqual(r[0],200)
+        db=DB(self.path,init=False)
+        bal=lambda i: db.conn.execute('SELECT balance FROM customers WHERE id=?',(i,)).fetchone()[0]
+        self.assertEqual(bal(ca),0); self.assertGreater(bal(cb),0)
+        db.close()
+
 if __name__=='__main__':
     unittest.main()
