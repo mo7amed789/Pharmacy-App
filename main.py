@@ -5885,8 +5885,7 @@ class App:
         ttk.Button(_af, text="🔍 عرض", command=self.audit_refresh).pack(side="left", padx=6)
         self.lbl_audit_count = ttk.Label(f, text="", style="Muted.TLabel")
         self.lbl_audit_count.pack(anchor="w")
-        self.txt_audit = tk.Text(f, width=100, height=12, font=("Segoe UI", 10))
-        self.txt_audit.pack(fill="both", expand=True, pady=4)
+        self.txt_audit, self.txt_audit_detail = self._make_log_view(f, 12, "audit")
         _ab = ttk.Frame(f)
         _ab.pack(anchor="w", pady=4)
         ttk.Button(_ab, text="تحديث سجل التدقيق", command=self.audit_refresh).pack(side="left")
@@ -5905,8 +5904,7 @@ class App:
         ttk.Button(_sf, text="🔍 عرض", command=self.system_log_refresh).pack(side="left", padx=6)
         ttk.Button(_sf, text="⬇️ تصدير سجل النظام (CSV)",
                    command=lambda: self.export_log_csv("system")).pack(side="left", padx=6)
-        self.txt_syslog = tk.Text(f, width=100, height=10, font=("Segoe UI", 10))
-        self.txt_syslog.pack(fill="both", expand=True, pady=4)
+        self.txt_syslog, self.txt_syslog_detail = self._make_log_view(f, 10, "sys")
         self.system_log_refresh()
 
     def save_pharmacy_name(self):
@@ -6178,6 +6176,7 @@ class App:
                 self.btn_cloud_pull.config(state="normal")
                 self._cloud_refresh_label()
                 if error is not None:
+                    self.db.syslog("error", "cloud_sync", "pull_failed", str(error)[:300])
                     messagebox.showerror("خطأ في المزامنة", str(error))
                     return
                 added, updated, skipped = result
@@ -6218,6 +6217,7 @@ class App:
                 self.btn_cloud_push.config(state="normal")
                 self._cloud_refresh_label()
                 if error is not None:
+                    self.db.syslog("error", "cloud_sync", "push_failed", str(error)[:300])
                     messagebox.showerror("خطأ في المزامنة", str(error))
                     return
                 sent, failed = result
@@ -6410,10 +6410,58 @@ class App:
             self._ui_post(ui)
         cloud_sync.run_in_background(work, done)
 
+    def _make_log_view(self, parent, height, kind):
+        """Log list that wraps long lines (nothing is cut off at the right edge)
+        with a vertical scrollbar, plus a detail box: click any line and the
+        full record shows below it, so no event needs a CSV export to be read."""
+        box = ttk.Frame(parent)
+        box.pack(fill="both", expand=True, pady=4)
+        txt = tk.Text(box, width=100, height=height, font=("Segoe UI", 10), wrap="word", cursor="arrow")
+        sb = ttk.Scrollbar(box, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        txt.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        txt.tag_configure("sel_line", background="#cfe3ff")
+        ttk.Label(parent, text="تفاصيل السطر المحدد (اضغط على أي سطر):", style="Muted.TLabel").pack(anchor="w")
+        det = tk.Text(parent, width=100, height=13, font=("Consolas", 10), wrap="word")
+        det.pack(fill="x", pady=2)
+        det.insert("1.0", "")
+        det.configure(state="disabled")
+        txt.bind("<Button-1>", lambda e, t=txt, k=kind: self._log_line_click(t, k, e))
+        txt.bind("<Key>", lambda e: "break" if e.state & 4 == 0 and e.keysym not in
+                 ("Up", "Down", "Prior", "Next", "Home", "End") else None)
+        return txt, det
+
+    def _log_line_click(self, txt, kind, event):
+        rows = getattr(self, "_audit_rows" if kind == "audit" else "_sys_rows", [])
+        det = self.txt_audit_detail if kind == "audit" else self.txt_syslog_detail
+        try:
+            idx = int(txt.index("@%d,%d" % (event.x, event.y)).split(".")[0]) - 1
+            # a logical line may wrap over several display lines: count by newline
+            # characters, which map 1:1 to rows
+            row = rows[idx]
+        except Exception:
+            return
+        txt.tag_remove("sel_line", "1.0", "end")
+        txt.tag_add("sel_line", "%d.0" % (idx + 1), "%d.0 lineend" % (idx + 1))
+        _bn = {b["id"]: b["name"] for b in self.db.list_branches()}
+        lines = []
+        for k, v in row.items():
+            if v in (None, ""):
+                continue
+            if k == "branch_id":
+                v = "%s (%s)" % (_bn.get(v, v), v)
+            lines.append("%s: %s" % (k, v))
+        det.configure(state="normal")
+        det.delete("1.0", "end")
+        det.insert("1.0", "\n".join(lines))
+        det.configure(state="disabled")
+
     def system_log_refresh(self):
         if not hasattr(self, "txt_syslog"):
             return
         rows = self.db.system_log_query(level=self.cb_sys_level.get().strip(), limit=200)
+        self._sys_rows = rows
         self.txt_syslog.delete("1.0", "end")
         for r in rows:
             self.txt_syslog.insert("end", "%s | %s | %s/%s | %s%s\n" % (
@@ -6454,9 +6502,7 @@ class App:
         self.root.report_callback_exception = handler
 
     def audit_refresh(self):
-        """v6.13: السجل بفلاتر (بحث حر / نوع الإجراء / المستخدم).
-        الحجم مضبوط: لا يُحتفظ إلا بأحدث 5,000 حدث (تنظيف تلقائي عند
-        كل تشغيل) فلا يكبر حتى بعد سنوات."""
+        """v6.13: السجل بفلاتر (بحث حر / نوع الإجراء / المستخدم). يُحتفظ بالسجل سنتين."""
         if not hasattr(self, "txt_audit"):
             return  # v6.14: الإعدادات لم تُبن بعد
         try:
@@ -6477,6 +6523,7 @@ class App:
         user = self.cb_audit_user.get().strip()
         rows = self.db.audit_query(text=text, action=action, user=user, limit=200)
         _bn = {b["id"]: b["name"] for b in self.db.list_branches()}
+        self._audit_rows = rows
         self.txt_audit.delete("1.0", "end")
         for a in rows:
             line = "%s | %s%s | %s | %s | %s" % (
