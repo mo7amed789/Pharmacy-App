@@ -179,7 +179,9 @@ def enable(db, lvl="summary"):
     a, s = _max_ids(db)
     st.update(enabled=1, level=lvl, generation=uuid.uuid4().hex[:12], a_cur=a, s_cur=s,
               a_fp=_fp(db, "audit_log", a), s_fp=_fp(db, "system_log", s), last_err="",
-              a_ts=_ts(db, "audit_log", a), s_ts=_ts(db, "system_log", s))
+              a_ts=_ts(db, "audit_log", a), s_ts=_ts(db, "system_log", s),
+              em_a_cur=a, em_s_cur=s, em_a_ts=_ts(db, "audit_log", a), em_s_ts=_ts(db, "system_log", s),
+              em_last_report=time.time())
     if not st.get("device_id"):
         st["device_id"] = "pc-" + uuid.uuid4().hex[:12]
     save_state(db, st)
@@ -255,6 +257,14 @@ def heartbeat(db, version=""):
                         "level": level(db)}}
 
 
+def _email_cfg():
+    try:
+        import email_report
+        return email_report.load_email_cfg()
+    except Exception:
+        return None
+
+
 def preview(db, lvl=None):
     """What the owner is shown BEFORE enabling: destination, level, sample rows. Sends nothing."""
     cfg = load_config()
@@ -266,7 +276,12 @@ def preview(db, lvl=None):
     srows = db.conn.execute("SELECT * FROM system_log ORDER BY id DESC LIMIT 2").fetchall()
     sample = [{"kind": "activity", "payload": audit_payload(r, lvl)} for r in arows] + \
              [{"kind": "system", "payload": system_payload(r, lvl)} for r in srows]
-    return {"configured": cfg is not None, "destination": destination(cfg), "level": lvl, "device_id": dev,
+    _ecfg = _email_cfg()
+    dest = destination(cfg) if cfg else ""
+    if _ecfg:
+        import email_report as _er
+        dest = (dest + "; " if dest else "") + _er.destination(_ecfg)
+    return {"configured": cfg is not None or _ecfg is not None, "destination": dest, "level": lvl, "device_id": dev,
             "sample": sample, "history_sent": False}
 
 
@@ -363,6 +378,8 @@ def sync_once(db, client=None, version="", heartbeat_due=True):
 
 def status_text(db):
     cfg = load_config()
+    if cfg is None and _email_cfg() is not None:
+        return "المتابعة عن بعد (إيميل كل 6 ساعات): %s" % ("مفعّلة" if is_enabled(db) else "متوقفة")
     if cfg is None:
         return "المتابعة عن بعد غير مُعدّة (لا يوجد ملف remote_monitor.json). البرنامج يعمل محلياً كالمعتاد."
     if not is_enabled(db):
@@ -399,6 +416,11 @@ class Monitor(threading.Thread):
                         r = sync_once(db, version=self.version, heartbeat_due=hb)
                         if r is not None and hb:
                             self._last_hb = time.time()
+                        try:
+                            import email_report
+                            email_report.tick(db, version=self.version)
+                        except Exception:
+                            pass
                 finally:
                     db.close()
             except Exception:
