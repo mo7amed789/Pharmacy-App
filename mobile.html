@@ -134,6 +134,28 @@ input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search
 .pay button:hover{border-color:var(--pri)}
 .pay button.sel{border-color:var(--pri);background:var(--tint);color:var(--pri-deep);box-shadow:0 0 0 1px var(--pri)}
 
+/* ---- v6.31: سرعة الاستجابة والشكل ---- */
+@keyframes cardIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.drug{animation:cardIn .18s ease-out both;content-visibility:auto;contain-intrinsic-size:auto 132px}
+.drug b{font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.drug .m{overflow-wrap:anywhere}
+.units button{transition:background-color .12s ease,border-color .12s ease,transform .06s ease}
+.units button:active{transform:scale(.96)}
+.units button small{color:var(--pri2);font-weight:700;font-size:14px}
+.stock{white-space:nowrap}
+.skel{height:104px;margin-top:10px;border-radius:var(--r-m);border:1px solid var(--line);background:linear-gradient(90deg,#EEF1F1 25%,#F8FAFA 50%,#EEF1F1 75%);background-size:200% 100%;animation:shimmer 1.1s linear infinite}
+.search input:focus{box-shadow:0 0 0 3px rgba(13,148,136,.22),var(--shadow-m)}
+@media (max-width:380px){
+  main{padding-inline:8px}
+  .top h1{font-size:17px}.conn{padding:4px 8px}
+  .units button{font-size:14px;min-height:54px}
+  .card{padding:11px 11px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
+
 /* ---- الشريط السفلي ---- */
 #bar{position:fixed;bottom:0;left:0;right:0;background:rgba(255,255,255,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom));box-shadow:0 -8px 24px rgba(11,59,57,.12);z-index:15}
 #bar .in{max-width:720px;margin:0 auto;display:flex;align-items:center;gap:12px}
@@ -628,19 +650,31 @@ $('searchClear').addEventListener('click',()=>{
 $('searchInput').addEventListener('input',()=>{
   syncSearchClear();clearTimeout(st);searchRequest++;
   if(!$('searchInput').value.trim()){doSearch('');return}
-  st=setTimeout(()=>doSearch($('searchInput').value),300);
+  st=setTimeout(()=>doSearch($('searchInput').value),200);
 });
 // Results render right under the box; on a phone with the keyboard open, keep the box at the top of the visible area.
 $('searchInput').addEventListener('focus',()=>{setTimeout(()=>{try{{const h=document.querySelector('header'),e=$('searchInput');scrollTo({top:Math.max(0,e.getBoundingClientRect().top+(window.pageYOffset||0)-(h?h.offsetHeight:0)-10),behavior:'smooth'})}}catch(e){}},250)});
+const searchCache=new Map();let searchAbort=null,skelT=null;
 async function doSearch(q){
   syncSearchClear();const request=++searchRequest;
-  if(!(q||'').trim()){$('results').innerHTML='';$('refResults').innerHTML='';return}
+  if(!(q||'').trim()){if(searchAbort)try{searchAbort.abort()}catch(e){}clearTimeout(skelT);$('results').innerHTML='';$('refResults').innerHTML='';return}
   if(cloudMode){
     try{const drugs=await cloudSearch(q);if(request===searchRequest)renderResults(drugs)}catch(e){if(request===searchRequest)showMsg('تعذّر البحث في السحابة — تحقق من إنترنت الهاتف.')}
     return;
   }
-  try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''));chk(r);const d=await r.json();if(request===searchRequest)renderResults(d.drugs||[]);if(request===searchRequest)searchRef(q,request)}
-  catch(e){if(request===searchRequest&&!quiet(e))showMsg('تعذّر البحث.')}
+  // v6.31: repeat queries come from a 15s cache, the previous in-flight search is cancelled, the reference
+  // search runs in parallel with the main one, and a skeleton shows if the PC is slow to answer.
+  const key=q.trim().toLowerCase(),hit=searchCache.get(key);
+  searchRef(q,request);
+  if(hit&&Date.now()-hit.t<15000){clearTimeout(skelT);if(request===searchRequest)renderResults(hit.d);return}
+  if(searchAbort)try{searchAbort.abort()}catch(e){}
+  const ac=typeof AbortController==='function'?new AbortController():null;searchAbort=ac;
+  clearTimeout(skelT);skelT=setTimeout(()=>{if(request===searchRequest&&!$('results').firstChild)$('results').innerHTML='<div class="skel"></div><div class="skel"></div><div class="skel"></div>'},150);
+  try{const r=await api('/api/drugs?q='+encodeURIComponent(q||''),ac?{signal:ac.signal}:{});chk(r);const d=await r.json();
+    if(searchCache.size>=30)searchCache.delete(searchCache.keys().next().value);searchCache.set(key,{t:Date.now(),d:d.drugs||[]});
+    if(request===searchRequest)renderResults(d.drugs||[])}
+  catch(e){if(request===searchRequest&&!(e&&e.name==='AbortError')&&!quiet(e))showMsg('تعذّر البحث.')}
+  finally{clearTimeout(skelT);if(request===searchRequest&&$('results').querySelector('.skel'))$('results').innerHTML=''}
 }
 async function searchRef(q,request){
   const box=$('refResults');if(!box)return;
@@ -686,7 +720,7 @@ function drugCards(drugs,onAdd){
   return wrap;
 }
 function renderResults(drugs){
-  const b=$('results');b.innerHTML='';
+  clearTimeout(skelT);const b=$('results');b.innerHTML='';
   if(!drugs.length){b.innerHTML='<p class="muted">لا نتائج.</p>';return}
   b.appendChild(drugCards(drugs.slice(0,20),addToCart));
 }
@@ -773,7 +807,7 @@ async function saveInvoice(){
     const r=await api('/api/invoices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     chk(r);const d=await r.json();
     if(!r.ok){showMsg(d.error||'تعذّر حفظ الفاتورة.');return}
-    cart=[];clientRef='';renderCart();$('noteInput').value='';$('paidInput').value='';
+    searchCache.clear();cart=[];clientRef='';renderCart();$('noteInput').value='';$('paidInput').value='';
     ['invView','bar'].forEach(i=>$(i).classList.add('hidden'));$('tabs').classList.add('hidden');
     $('successScreen').classList.remove('hidden');
     $('successInv').innerHTML='فاتورة <span class="ltr">'+esc(d.invoice_no)+'</span>';
@@ -784,7 +818,7 @@ async function saveInvoice(){
   }catch(e){if(!quiet(e))showMsg('تعذّر الاتصال بالكمبيوتر.')}
   finally{saving=false;$('saveBtn').innerHTML=ICON_SAVE+' حفظ الفاتورة'}
 }
-function newInvoice(){$('tabs').classList.remove('hidden');show('inv');doSearch($('searchInput').value)}
+function newInvoice(){searchCache.clear();$('tabs').classList.remove('hidden');show('inv');doSearch($('searchInput').value)}
 
 /* ---------- scanning (BarcodeDetector + ZXing, torch) ---------- */
 const FORMATS=['ean_13','ean_8','qr_code','code_128','code_39','upc_a','upc_e','data_matrix'];
