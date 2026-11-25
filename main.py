@@ -2434,6 +2434,7 @@ class App:
             top2, text="💾 حفظ فاتورة الشراء وتحديث المخزون",
             command=self.pur_save)
         self.btn_pur_save_top.pack(side="left", padx=(0, 8))
+        ttk.Button(top2, text="📷 من صورة فاتورة", command=self.invoice_photo_intake).pack(side="left", padx=(0, 8))
         self.lbl_pur_total_top = ttk.Label(
             top2, text="إجمالي فاتورة الشراء: 0.00 ج.م", style="Total.TLabel")
         self.lbl_pur_total_top.pack(side="left")
@@ -2489,6 +2490,11 @@ class App:
         self.lbl_pur_total = ttk.Label(mid, text="إجمالي فاتورة الشراء: 0.00 ج.م", style="Total.TLabel")
         self.lbl_pur_total.pack()
         self.pur_search_refresh()
+
+    def invoice_photo_intake(self):
+        """Photo of a supplier invoice -> local OCR -> reviewed purchase DRAFT (never auto-saved)."""
+        import invoice_intake_ui
+        invoice_intake_ui.open_invoice_intake(self)
 
     def pur_search_refresh(self):
         if not hasattr(self, "list_pur"):
