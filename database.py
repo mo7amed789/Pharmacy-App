@@ -845,6 +845,13 @@ class DB:
         for t in ("audit_log", "system_log"):
             self.conn.execute("""CREATE TRIGGER IF NOT EXISTS trg_%s_no_update BEFORE UPDATE ON %s
                 BEGIN SELECT RAISE(ABORT, 'log rows are append-only'); END""" % (t, t))
+        # ...and cannot be deleted by anyone (app code, a staff session, any SQL on
+        # this connection) until they are older than the retention window. Only
+        # the age-based prune can remove rows, and only aged-out ones.
+        for t, days in (("audit_log", 730), ("system_log", 365)):
+            self.conn.execute("""CREATE TRIGGER IF NOT EXISTS trg_%s_no_delete BEFORE DELETE ON %s
+                WHEN OLD.created_at='' OR OLD.created_at >= strftime('%%Y-%%m-%%dT%%H:%%M:%%S','now','localtime','-%d days')
+                BEGIN SELECT RAISE(ABORT, 'log rows cannot be deleted before retention ends'); END""" % (t, t, days))
         self.conn.commit()
 
     # ---------- branch scope ----------
@@ -1228,9 +1235,10 @@ class DB:
             self.source = source
 
     def _audit_row(self, user, action, details="", entity="", entity_id=None,
-                   before=None, after=None, branch_id=_AUTO, shift_id=_AUTO):
+                   before=None, after=None, branch_id=_AUTO, shift_id=_AUTO, strict=True):
         """Insert one activity row WITHOUT committing (so it lands in the
-        same transaction as the change it describes). Never raises."""
+        same transaction as the change it describes). If the row cannot be
+        written the transaction is rolled back and this raises (strict)."""
         try:
             user = user or self.actor or ""
             role = ""
@@ -1261,14 +1269,30 @@ class DB:
                  entity or "", "" if entity_id is None else str(entity_id),
                  branch_id, shift_id, _jdump(before), _jdump(after)))
         except Exception as e:
+            self._audit_failed(action, e, strict)
+
+    def _audit_failed(self, action, e, strict):
+        """The activity row could not be written. Strict (every business write):
+        roll the whole transaction back so a change is never saved without its
+        log row, and raise. Non-strict (informational events): the event is
+        lost from the activity log, so it is recorded in the system log."""
+        if strict:
             try:
-                import sys
-                print("activity log write failed:", type(e).__name__, file=sys.stderr)
+                self.conn.rollback()
             except Exception:
                 pass
+        try:
+            self.syslog("error", "audit", "audit_write_failed",
+                        "%s: %s" % (action, type(e).__name__), "")
+        except Exception:
+            pass
+        if strict:
+            raise RuntimeError("تعذر تسجيل العملية في سجل النشاط، لم يتم حفظ التغيير (%s)" % type(e).__name__)
 
-    def audit(self, user, action, details="", **kw):
-        self._audit_row(user, action, details, **kw)
+    def audit(self, user, action, details="", strict=False, **kw):
+        """Standalone event (own commit). Non-strict by default: these are
+        informational (login, backup, sync); a failed write goes to the system log."""
+        self._audit_row(user, action, details, strict=strict, **kw)
         self.conn.commit()
 
     def syslog(self, level, component, event, message="", detail=""):
@@ -2715,10 +2739,11 @@ class DB:
                  cashier or "", _now()))
         c.execute("UPDATE suppliers SET balance=balance-? WHERE id=?",
                   (total, supplier_id))
+        self._audit_row(cashier or "", "purchase_return",
+                        "supplier %s drug %s qty_units %d total %.2f (%s)"
+                        % (supplier_id, drug_id, qty_units, total, (reason or "").strip()),
+                        entity="purchase_return", entity_id=rid)
         self.conn.commit()
-        self.audit(cashier or "", "purchase_return",
-                   "supplier %s drug %s qty_units %d total %.2f (%s)"
-                   % (supplier_id, drug_id, qty_units, total, (reason or "").strip()))
         return rid, total
 
     def purchase_returns(self, day=None):
