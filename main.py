@@ -113,7 +113,7 @@ from tkinter import ttk, filedialog, simpledialog
 # v6.18: themed message dialogs — same messagebox API, app look.
 import ui_dialogs
 import ui_dialogs as messagebox
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from database import (DB, allowed_units, unit_price, units_for_qty,
                       units_per_box, extract_gtin, drug_default_line_discount,
@@ -497,7 +497,7 @@ class App:
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
         root.title("Pharmacy Enterprise v6.30 — صيدلية المؤسسة | المستخدم: %s (%s)" %
-                   (self.username, "مدير" if self.is_admin else "كاشير"))
+                   (self.username, "مدير" if self.is_admin else "موظف"))
         # v6.20: screen-aware default size + sensible minimum + the
         # window reopens with the size, position and maximized state it
         # was closed with (saved in settings, restored defensively).
@@ -532,6 +532,13 @@ class App:
                                    font=("Segoe UI", 10, "bold"), relief="flat",
                                    command=self.toggle_theme)
         self.btn_theme.pack(side="right", padx=6, pady=8)
+        tk.Button(self.topbar, text="🕒 الحضور", bg=self.pal["header_bg2"], fg="#FFFFFF",
+                  font=("Segoe UI", 10, "bold"), relief="flat",
+                  command=self.attendance_dialog).pack(side="right", padx=6, pady=8)
+        if not self.is_admin:
+            tk.Button(self.topbar, text="🔑 كلمتي", bg=self.pal["header_bg2"], fg="#FFFFFF",
+                      font=("Segoe UI", 10, "bold"), relief="flat",
+                      command=self.change_password_dialog).pack(side="right", padx=6, pady=8)
         # ----- status banner (coloured success/error/info) -----
         self.banner = ui_theme.make_banner(root, "جاهز — اختر تبويباً أو ابدأ البيع من الكاشير.", "info", self.theme_name)
         self.banner.pack(fill="x")
@@ -567,6 +574,13 @@ class App:
         for _idx, (_title, _builder) in enumerate(_lazy, start=1):
             self._tab_builders[_idx] = _builder
             self.notebook.add(ttk.Frame(self.notebook), text=_title)
+        # Role-based access: tab indices stay the same, tabs an employee may not
+        # use are hidden (and blocked in goto_tab / _on_tab_changed below).
+        for _hidden in self.hidden_tabs():
+            try:
+                self.notebook.hide(_hidden)
+            except Exception:
+                pass
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
         # Thread-safe UI queue: background threads (hotspot / server)
         # must NEVER call Tk methods directly — Python 3.12 raises
@@ -754,7 +768,7 @@ class App:
             name = row["value"] if row else "صيدلية المؤسسة"
             self.lbl_top_pharmacy.config(text="|  %s" % name)
             self.lbl_top_user.config(text="👤 %s (%s)" % (
-                self.username, "مدير" if self.is_admin else "كاشير"))
+                self.username, "مدير" if self.is_admin else "موظف"))
             if getattr(self, "current_shift", None):
                 self.lbl_top_shift.config(text="🟢 وردية #%d مفتوحة" % self.current_shift["id"])
             else:
@@ -820,9 +834,12 @@ class App:
     def _dash_visible_cards(self):
         all_keys = ["sales", "profit", "cash", "invoices", "low", "expiry", "critical", "inv_value"]
         if not getattr(self, "ui_dash_cards", ""):
-            return set(all_keys)
-        chosen = {k.strip() for k in self.ui_dash_cards.split(",") if k.strip()}
-        return chosen if chosen else set(all_keys)
+            vis = set(all_keys)
+        else:
+            vis = {k.strip() for k in self.ui_dash_cards.split(",") if k.strip()} or set(all_keys)
+        if not self.is_admin:  # employees never see profit or stock value
+            vis -= {"profit", "inv_value"}
+        return vis
 
     def _apply_dash_cards_visibility(self):
         vis = self._dash_visible_cards()
@@ -842,7 +859,18 @@ class App:
             second.pack(fill="both", expand=True, padx=10, pady=4)
         except Exception: pass
 
+    # Tabs an employee (role "cashier") cannot open: 3 purchases/suppliers,
+    # 5 reports (profit), 7 settings, 8 smart forecast (costs, expected loss).
+    # Admin sees every tab. Edit EMPLOYEE_HIDDEN_TABS to change this.
+    EMPLOYEE_HIDDEN_TABS = (3, 5, 7, 8)
+
+    def hidden_tabs(self):
+        return () if self.is_admin else self.EMPLOYEE_HIDDEN_TABS
+
     def goto_tab(self, index):
+        if index in self.hidden_tabs():
+            messagebox.showerror("صلاحيات", "هذه الصفحة للمدير فقط")
+            return
         try:
             self._ensure_tab(index)
             self.notebook.select(index)
@@ -893,6 +921,9 @@ class App:
     def _on_tab_changed(self, event=None):
         try:
             idx = self.notebook.index("current")
+            if idx in self.hidden_tabs():
+                self.notebook.select(0)
+                return
             self._ensure_tab(idx)
             if idx == 0:
                 self.refresh_dashboard()
@@ -938,11 +969,13 @@ class App:
         ttk.Label(acts, text="إجراءات سريعة:", style="Section.TLabel").pack(side="left", padx=4)
         ttk.Button(acts, text="🛒 بيع جديد (F2)", command=self.goto_pos,
                    style="Accent.TButton").pack(side="left", padx=4)
-        ttk.Button(acts, text="➕ إضافة دواء",
-                   command=lambda: (self.goto_tab(2), self.drug_dialog())).pack(side="left", padx=4)
+        if self.is_admin:
+            ttk.Button(acts, text="➕ إضافة دواء",
+                       command=lambda: (self.goto_tab(2), self.drug_dialog())).pack(side="left", padx=4)
         ttk.Button(acts, text="📦 المخزون", command=lambda: self.goto_tab(2)).pack(side="left", padx=4)
-        ttk.Button(acts, text="🤖 التنبؤ الذكي", command=lambda: self.goto_tab(8)).pack(side="left", padx=4)
-        ttk.Button(acts, text="💾 نسخة احتياطية", command=self.do_backup).pack(side="left", padx=4)
+        if self.is_admin:
+            ttk.Button(acts, text="🤖 التنبؤ الذكي", command=lambda: self.goto_tab(8)).pack(side="left", padx=4)
+            ttk.Button(acts, text="💾 نسخة احتياطية", command=self.do_backup).pack(side="left", padx=4)
         ttk.Button(acts, text="🔄 تحديث اللوحة", command=self.refresh_dashboard).pack(side="left", padx=4)
         # v5.9: bottom is STACKED, alerts FIRST (full width) so a low-stock
         # or near-expiry warning is never hidden beside the best sellers.
@@ -1815,6 +1848,8 @@ class App:
         for c in cols:
             self.tree_inv.heading(c, text=heads[c])
             self.tree_inv.column(c, width=110 if c not in ("id", "strength", "form", "disc") else (40 if c == "id" else 80))
+        if not self.is_admin:  # employees do not see purchase (cost) prices
+            self.tree_inv.configure(displaycolumns=[c for c in cols if c != "buy"])
         self.tree_inv.pack(fill="both", expand=True, padx=8)
         self.tree_inv.bind("<Double-Button-1>", lambda e: self.show_batches())
         btns = ttk.Frame(tab)
@@ -2149,7 +2184,7 @@ class App:
             tree.column(c, width=140)
         tree.pack(fill="both", expand=True, padx=10, pady=10)
         for b in self.db.batches_for(d["id"]):
-            tree.insert("", "end", values=(b["batch_no"], b["expiry"], b["qty_units"], money(b["buy_price_unit"])))
+            tree.insert("", "end", values=(b["batch_no"], b["expiry"], b["qty_units"], money(b["buy_price_unit"]) if self.is_admin else "—"))
         ttk.Label(win, text="البيع يأخذ دائماً من أقرب تشغيلة تنتهي أولاً (FEFO).",
                   style="Muted.TLabel").pack(pady=4)
 
@@ -2918,6 +2953,179 @@ class App:
         if self.is_admin:
             ttk.Button(tab, text="👥 تقرير مبيعات الموظفين", command=self.employee_sales_dialog).pack(anchor="w", padx=14, pady=6)
         self.reports_refresh()
+
+    def attendance_dialog(self):
+        """Everyone records their own attendance here. The admin also sees all
+        employees and can add a record for someone (a shift recorded by hand)."""
+        win = tk.Toplevel(self.root)
+        win.title("الحضور والانصراف")
+        ui_theme.fit_dialog(win, 860, 560)
+        top = ttk.Frame(win)
+        top.pack(fill="x", padx=12, pady=10)
+        lbl = ttk.Label(top, text="", font=("Segoe UI", 12, "bold"))
+        lbl.pack(side="right", padx=8)
+        keys = ("username", "branch", "check_in", "check_out", "hours", "note")
+        heads = ("الموظف", "الفرع", "الحضور", "الانصراف", "الساعات", "ملاحظة")
+        tree = ttk.Treeview(win, columns=keys, show="headings", height=14)
+        for k, h in zip(keys, heads):
+            tree.heading(k, text=h)
+            tree.column(k, width=(170 if k in ("check_in", "check_out") else 150 if k == "note" else 110), stretch=True)
+        filt = {}
+        today = date.today().isoformat()
+        if self.is_admin:
+            fr = ttk.Frame(win)
+            fr.pack(fill="x", padx=12)
+            ttk.Label(fr, text="الموظف (فارغ = الكل):").pack(side="left")
+            filt["user"] = ttk.Entry(fr, width=14)
+            filt["user"].pack(side="left", padx=4)
+            for k, lab in (("from", "من"), ("to", "إلى")):
+                ttk.Label(fr, text=lab).pack(side="left")
+                filt[k] = ttk.Entry(fr, width=12)
+                filt[k].insert(0, today)
+                filt[k].pack(side="left", padx=4)
+            ttk.Button(fr, text="عرض", command=lambda: refresh()).pack(side="left", padx=4)
+        tree.pack(fill="both", expand=True, padx=12, pady=8)
+
+        def refresh():
+            op = self.db.attendance_open_for(self.username)
+            lbl.config(text=("🟢 حاضر منذ %s" % op["check_in"].replace("T", " ")) if op else "⚪ لم يتم تسجيل حضور")
+            d1 = filt["from"].get().strip() if filt else today
+            d2 = filt["to"].get().strip() if filt else today
+            if not filt:
+                d1 = (date.today() - timedelta(days=30)).isoformat()
+            try:
+                rows = self.db.attendance_report(self.username, d1, d2,
+                                                 (filt["user"].get().strip() or None) if filt else None)
+            except ValueError as e:
+                messagebox.showerror("خطأ", str(e), parent=win)
+                return
+            tree.delete(*tree.get_children())
+            for r in rows:
+                tree.insert("", "end", values=(r["username"], r.get("branch_name") or "—",
+                                               r["check_in"].replace("T", " "),
+                                               r["check_out"].replace("T", " ") or "—",
+                                               "—" if r["hours"] is None else r["hours"], r["note"]))
+
+        def do_in():
+            try:
+                self.db.check_in(self.username)
+                self.db.audit(self.username, "attendance_in", "")
+            except ValueError as e:
+                messagebox.showerror("الحضور", str(e), parent=win)
+            refresh()
+
+        def do_out():
+            try:
+                self.db.check_out(self.username)
+                self.db.audit(self.username, "attendance_out", "")
+            except ValueError as e:
+                messagebox.showerror("الحضور", str(e), parent=win)
+            refresh()
+        ttk.Button(top, text="✅ تسجيل حضور", style="Success.TButton", command=do_in).pack(side="left", padx=4)
+        ttk.Button(top, text="🚪 تسجيل انصراف", command=do_out).pack(side="left", padx=4)
+        if self.is_admin:
+            def add_manual():
+                dlg = tk.Toplevel(win)
+                dlg.title("تسجيل وردية لموظف")
+                ui_theme.fit_dialog(dlg, 380, 330)
+                ents = {}
+                for key, lab, init in (("u", "اسم المستخدم", ""), ("a", "الحضور (2026-11-25 09:00)", today + " 09:00"),
+                                       ("b", "الانصراف (اختياري)", ""), ("n", "ملاحظة", "")):
+                    ttk.Label(dlg, text=lab).pack(anchor="w", padx=12, pady=(8, 0))
+                    e = ttk.Entry(dlg, width=36)
+                    e.insert(0, init)
+                    e.pack(padx=12)
+                    ents[key] = e
+
+                def save():
+                    try:
+                        self.db.attendance_add_manual(self.username, ents["u"].get().strip(),
+                                                      ents["a"].get(), ents["b"].get(), ents["n"].get())
+                    except (ValueError, PermissionError) as e:
+                        messagebox.showerror("خطأ", str(e), parent=dlg)
+                        return
+                    self.db.audit(self.username, "attendance_manual", ents["u"].get().strip())
+                    dlg.destroy()
+                    refresh()
+                ttk.Button(dlg, text="حفظ", style="Success.TButton", command=save).pack(pady=12)
+            ttk.Button(top, text="➕ تسجيل وردية لموظف", command=add_manual).pack(side="left", padx=4)
+        refresh()
+
+    def branches_dialog(self):
+        if not self.is_admin:
+            messagebox.showerror("صلاحيات", "إدارة الفروع للمدير فقط")
+            return
+        win = tk.Toplevel(self.root)
+        win.title("الفروع")
+        ui_theme.fit_dialog(win, 700, 660)
+        tree = ttk.Treeview(win, columns=("name", "address", "active"), show="headings", height=3)
+        for k, h in (("name", "الفرع"), ("address", "العنوان"), ("active", "الحالة")):
+            tree.heading(k, text=h)
+            tree.column(k, width=180)
+        tree.pack(fill="x", padx=12, pady=10)
+        form = ttk.Frame(win)
+        form.pack(fill="x", padx=12)
+        e_name = ttk.Entry(form, width=16)
+        e_addr = ttk.Entry(form, width=22)
+        ttk.Label(form, text="اسم الفرع").pack(side="left")
+        e_name.pack(side="left", padx=4)
+        ttk.Label(form, text="العنوان").pack(side="left")
+        e_addr.pack(side="left", padx=4)
+        users_tree = ttk.Treeview(win, columns=("u", "full", "role", "branch"), show="headings", height=5)
+        for k, h in (("u", "المستخدم"), ("full", "الاسم"), ("role", "الدور"), ("branch", "الفرع")):
+            users_tree.heading(k, text=h)
+            users_tree.column(k, width=130)
+        cb = ttk.Combobox(win, state="readonly", width=24)
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            self._branch_rows = self.db.list_branches()
+            for b in self._branch_rows:
+                tree.insert("", "end", iid=str(b["id"]), values=(b["name"], b["address"], "نشط" if b["active"] else "موقوف"))
+            cb.configure(values=[b["name"] for b in self._branch_rows if b["active"]])
+            users_tree.delete(*users_tree.get_children())
+            names = {b["id"]: b["name"] for b in self._branch_rows}
+            for u in self.db.list_users(self.username):
+                users_tree.insert("", "end", iid=u["username"],
+                                  values=(u["username"], u["full_name"], "مدير" if u["role"] == "admin" else "موظف",
+                                          names.get(u["branch_id"], "—")))
+
+        def add():
+            try:
+                self.db.add_branch(self.username, e_name.get(), e_addr.get())
+            except (ValueError, PermissionError) as e:
+                messagebox.showerror("خطأ", str(e), parent=win)
+                return
+            self.db.audit(self.username, "branch_add", e_name.get().strip())
+            e_name.delete(0, "end")
+            e_addr.delete(0, "end")
+            refresh()
+
+        def toggle():
+            sel = tree.selection()
+            if not sel:
+                return
+            b = next(x for x in self._branch_rows if str(x["id"]) == sel[0])
+            self.db.set_branch_active(self.username, b["id"], not b["active"])
+            self.db.audit(self.username, "branch_toggle", b["name"])
+            refresh()
+
+        def assign():
+            sel = users_tree.selection()
+            if not sel or not cb.get():
+                messagebox.showinfo("الفروع", "اختر مستخدماً وفرعاً", parent=win)
+                return
+            b = next(x for x in self._branch_rows if x["name"] == cb.get())
+            self.db.set_user_branch(self.username, sel[0], b["id"])
+            self.db.audit(self.username, "user_branch", "%s -> %s" % (sel[0], b["name"]))
+            refresh()
+        ttk.Button(form, text="➕ إضافة فرع", style="Success.TButton", command=add).pack(side="left", padx=6)
+        ttk.Button(win, text="إيقاف / تفعيل الفرع المحدد", command=toggle).pack(anchor="w", padx=12, pady=6)
+        ttk.Label(win, text="تعيين موظف لفرع:", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12)
+        users_tree.pack(fill="x", padx=12, pady=6)
+        cb.pack(anchor="w", padx=12)
+        ttk.Button(win, text="تعيين", command=assign).pack(anchor="w", padx=12, pady=6)
+        refresh()
 
     def employee_sales_dialog(self):
         if not self.is_admin:
@@ -5510,7 +5718,8 @@ class App:
         ttk.Label(f, text="الأمان:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         ttk.Button(f, text="تغيير كلمة المرور الخاصة بي", command=self.change_password_dialog).pack(anchor="w", pady=4)
         if self.is_admin:
-            ttk.Button(f, text="➕ إضافة مستخدم جديد (مدير / كاشير)", command=self.add_user_dialog).pack(anchor="w", pady=4)
+            ttk.Button(f, text="➕ إضافة مستخدم جديد (مدير / موظف)", command=self.add_user_dialog).pack(anchor="w", pady=4)
+            ttk.Button(f, text="🏬 الفروع", command=self.branches_dialog).pack(anchor="w", pady=4)
         ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(f, text="البيانات:", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         ttk.Button(f, text="💾 نسخة احتياطية الآن (Backup)", command=self.do_backup).pack(anchor="w", pady=4)
@@ -5674,7 +5883,7 @@ class App:
     def add_user_dialog(self):
         win = tk.Toplevel(self.root)
         win.title("مستخدم جديد")
-        ui_theme.fit_dialog(win, 360, 260)
+        ui_theme.fit_dialog(win, 360, 340)
         ents = {}
         for key, lbl in [("username", "اسم المستخدم"), ("password", "كلمة المرور"), ("full", "الاسم الكامل")]:
             ttk.Label(win, text=lbl).pack(anchor="w", padx=12, pady=(8, 0))
@@ -5683,8 +5892,14 @@ class App:
             ents[key] = e
         ttk.Label(win, text="الدور:").pack(anchor="w", padx=12, pady=(8, 0))
         var = tk.StringVar(value="cashier")
-        ttk.Radiobutton(win, text="كاشير", variable=var, value="cashier").pack(anchor="w", padx=12)
+        ttk.Radiobutton(win, text="موظف", variable=var, value="cashier").pack(anchor="w", padx=12)
         ttk.Radiobutton(win, text="مدير", variable=var, value="admin").pack(anchor="w", padx=12)
+        ttk.Label(win, text="الفرع:").pack(anchor="w", padx=12, pady=(8, 0))
+        _branches = self.db.list_branches(active_only=True)
+        cb_branch = ttk.Combobox(win, state="readonly", width=33,
+                                 values=["— بدون فرع —"] + [b["name"] for b in _branches])
+        cb_branch.current(0)
+        cb_branch.pack(padx=12)
         def save():
             if not ents["username"].get().strip() or len(ents["password"].get()) < 8:
                 messagebox.showerror("خطأ", "أدخل اسم مستخدم وكلمة مرور 8 أحرف على الأقل")
@@ -5693,7 +5908,8 @@ class App:
                 # v5.0: PBKDF2 hash via DB.create_user (was raw SHA-256 here)
                 self.db.create_user(ents["username"].get().strip(),
                                     ents["password"].get(), var.get(),
-                                    ents["full"].get().strip())
+                                    ents["full"].get().strip(),
+                                    _branches[cb_branch.current() - 1]["id"] if cb_branch.current() > 0 else None)
             except Exception as e:
                 messagebox.showerror("خطأ", "اسم المستخدم موجود بالفعل: %s" % e)
                 return
@@ -5703,6 +5919,9 @@ class App:
         ttk.Button(win, text="حفظ", command=save, style="Success.TButton").pack(pady=12)
 
     def do_backup(self):
+        if not self.is_admin:
+            messagebox.showerror("صلاحيات", "النسخ الاحتياطي للمدير فقط")
+            return
         try:
             dest = self.db.backup()
         except Exception as e:
