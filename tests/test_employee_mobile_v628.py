@@ -166,6 +166,7 @@ class EmployeeMobile(unittest.TestCase):
         body=dict(trade_en='PhoneAdd',sell_price=10,buy_price=5,strips_per_box=1,tablets_per_strip=1,barcode='9990001112223')
         self.assertEqual(self.request('POST','/api/drugs',body,self.tokens['alice'])[0],403)
         self.assertNotEqual(self.request('POST','/api/drugs',body,self.tokens['manager'])[0],403)
+        self.assertEqual(self.request('POST','/api/drugs',body,legacy=True)[0],403)  # legacy shared PIN has no role, so no add-drug
 
 if __name__=='__main__':
     unittest.main()
