@@ -1438,6 +1438,10 @@ def _make_handler(db_path, req_log=None):
             (DB._link_barcode_checked)."""
             if not self._require_pin():
                 return
+            emp = getattr(self, "employee", None)
+            if emp and emp.get("role") != "admin":  # same rule as the desktop add-drug button
+                self._send_json(403, {"error": "إضافة الأصناف للمدير فقط"})
+                return
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except Exception:
