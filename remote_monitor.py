@@ -21,17 +21,11 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-K_ENABLED = "remote_monitor_enabled"
-K_LEVEL = "remote_monitor_level"
-K_AUDIT_CUR = "rm_audit_cursor"
-K_SYS_CUR = "rm_sys_cursor"
-K_LAST_OK = "rm_last_ok"
-K_LAST_ERR = "rm_last_error"
-K_DEVICE = "rm_device_id"
 TABLE = "monitor_events"
 BATCH = 200
-
 LEVELS = ("summary", "full")
+CONFLICT = "device_uid,device_id,generation,kind,src_id"
+_lock = threading.RLock()
 
 
 class MonitorError(Exception):
@@ -65,30 +59,48 @@ def destination(cfg):
     return "%s (table %s)" % (cfg["host"], TABLE) if cfg else ""
 
 
+# ---------- state: consent + upload cursors live in a file BESIDE the database ----------
+# (not inside it), so restoring an old database copy can neither turn monitoring off,
+# nor rewind the cursors, nor make new events reuse ids that were already uploaded.
+def _state_path(db):
+    return str(db.path) + ".rmstate.json"
+
+
+def load_state(db):
+    try:
+        with open(_state_path(db), encoding="utf-8") as f:
+            st = json.load(f)
+        if isinstance(st, dict):
+            return st
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def save_state(db, st):
+    with _lock:
+        tmp = _state_path(db) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+        os.replace(tmp, _state_path(db))
+
+
 def is_enabled(db):
-    return db.get_setting(K_ENABLED, "0") == "1"
+    return load_state(db).get("enabled") == 1
 
 
 def level(db):
-    v = db.get_setting(K_LEVEL, "summary")
+    v = load_state(db).get("level", "summary")
     return v if v in LEVELS else "summary"
 
 
 def device_id(db):
-    d = db.get_setting(K_DEVICE, "")
-    if not d:
+    st = load_state(db)
+    if not st.get("device_id"):
         import uuid
-        d = "pc-" + uuid.uuid4().hex[:12]
-        db.conn.execute("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                        (K_DEVICE, d))
-        db.conn.commit()
-    return d
-
-
-def _raw_set(db, key, value):
-    db.conn.execute("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    (key, str(value)))
-    db.conn.commit()
+        st["device_id"] = "pc-" + uuid.uuid4().hex[:12]
+        save_state(db, st)
+    return st["device_id"]
 
 
 def _max_ids(db):
@@ -97,22 +109,87 @@ def _max_ids(db):
     return a, s
 
 
+def _fp(db, table, rid):
+    """Fingerprint of one log row, to tell 'same history' from 'ids reused after a restore'."""
+    import hashlib
+    if not rid:
+        return ""
+    if table == "audit_log":
+        r = db.conn.execute("SELECT id,created_at,user,action FROM audit_log WHERE id=?", (rid,)).fetchone()
+    else:
+        r = db.conn.execute("SELECT id,created_at,level,component,event FROM system_log WHERE id=?", (rid,)).fetchone()
+    return hashlib.sha1("|".join(str(x) for x in r).encode("utf-8")).hexdigest()[:16] if r else ""
+
+
+def _ts(db, table, rid):
+    r = db.conn.execute("SELECT created_at FROM %s WHERE id=?" % table, (rid,)).fetchone() if rid else None
+    return r[0] if r else st_none()
+
+
+def st_none():
+    return ""
+
+
+def _cursor_after(db, table, ts, mx):
+    """Highest id whose row is not newer than the last uploaded row's time (forward only: rows
+    created after that moment, e.g. right after a restore, are still uploaded)."""
+    if not ts:
+        return mx
+    r = db.conn.execute("SELECT COALESCE(MAX(id),0) FROM %s WHERE created_at<=?" % table, (ts,)).fetchone()
+    return r[0] if r else mx
+
+
+def _new_generation(db, st, reason):
+    import uuid
+    a, s = _max_ids(db)
+    a = _cursor_after(db, "audit_log", st.get("a_ts", ""), a)
+    s = _cursor_after(db, "system_log", st.get("s_ts", ""), s)
+    st.update(generation=uuid.uuid4().hex[:12], a_cur=a, s_cur=s, a_fp=_fp(db, "audit_log", a),
+              s_fp=_fp(db, "system_log", s), a_ts=_ts(db, "audit_log", a) or st.get("a_ts", ""),
+              s_ts=_ts(db, "system_log", s) or st.get("s_ts", ""))
+    save_state(db, st)
+    # recorded locally (and uploaded as the first row of the new generation)
+    db.syslog("warning", "remote_monitor", "generation_change", reason)
+
+
+def check_generation(db, st):
+    """True when the database is not the history the cursors belong to (restore, reset, replaced
+    file): start a NEW generation, forward only, so new events are never skipped as duplicates."""
+    a_max, s_max = _max_ids(db)
+    for table, cur, fp, mx in (("audit_log", st.get("a_cur", 0), st.get("a_fp", ""), a_max),
+                               ("system_log", st.get("s_cur", 0), st.get("s_fp", ""), s_max)):
+        if cur and mx < cur:
+            _new_generation(db, st, "database has fewer log rows than already uploaded (%s): restored or reset" % table)
+            return True
+        if cur:
+            now = _fp(db, table, cur)
+            if now and now != fp:
+                _new_generation(db, st, "log ids were reused (%s): restored or replaced database" % table)
+                return True
+    return False
+
+
 def enable(db, lvl="summary"):
     """Turn on, forward only: nothing logged before this moment is ever sent."""
     if lvl not in LEVELS:
         raise ValueError("level")
+    import uuid
+    st = load_state(db)
     a, s = _max_ids(db)
-    _raw_set(db, K_AUDIT_CUR, a)
-    _raw_set(db, K_SYS_CUR, s)
-    _raw_set(db, K_LEVEL, lvl)
-    _raw_set(db, K_LAST_ERR, "")
-    _raw_set(db, K_ENABLED, "1")
-    db.audit(db.actor or "", "remote_monitor_on", "level=" + lvl, entity="setting", entity_id=K_ENABLED)
+    st.update(enabled=1, level=lvl, generation=uuid.uuid4().hex[:12], a_cur=a, s_cur=s,
+              a_fp=_fp(db, "audit_log", a), s_fp=_fp(db, "system_log", s), last_err="",
+              a_ts=_ts(db, "audit_log", a), s_ts=_ts(db, "system_log", s))
+    if not st.get("device_id"):
+        st["device_id"] = "pc-" + uuid.uuid4().hex[:12]
+    save_state(db, st)
+    db.audit(db.actor or "", "remote_monitor_on", "level=" + lvl, entity="setting", entity_id="remote_monitor")
 
 
 def disable(db):
-    _raw_set(db, K_ENABLED, "0")
-    db.audit(db.actor or "", "remote_monitor_off", "", entity="setting", entity_id=K_ENABLED)
+    st = load_state(db)
+    st["enabled"] = 0
+    save_state(db, st)
+    db.audit(db.actor or "", "remote_monitor_off", "", entity="setting", entity_id="remote_monitor")
 
 
 # ---------- what leaves the device ----------
@@ -141,8 +218,8 @@ def system_payload(r, lvl):
 
 
 def _pending(db, limit=BATCH):
-    ac = int(db.get_setting(K_AUDIT_CUR, "0") or 0)
-    sc = int(db.get_setting(K_SYS_CUR, "0") or 0)
+    st = load_state(db)
+    ac, sc = int(st.get("a_cur", 0)), int(st.get("s_cur", 0))
     arows = db.conn.execute(
         "SELECT a.*, b.name AS branch_name FROM audit_log a LEFT JOIN branches b ON b.id=a.branch_id "
         "WHERE a.id>? ORDER BY a.id LIMIT ?", (ac, limit)).fetchall()
@@ -154,22 +231,26 @@ def build_events(db, lvl=None, limit=BATCH):
     """Exactly the rows that would be uploaded next: (events, audit_max, sys_max)."""
     lvl = lvl or level(db)
     dev = device_id(db)
+    gen = load_state(db).get("generation", "")
     arows, srows = _pending(db, limit)
     ev = []
     for r in arows:
-        ev.append({"device_id": dev, "kind": "activity", "src_id": r["id"], "payload": audit_payload(r, lvl)})
+        ev.append({"device_id": dev, "generation": gen, "kind": "activity", "src_id": r["id"],
+                   "payload": audit_payload(r, lvl)})
     for r in srows:
-        ev.append({"device_id": dev, "kind": "system", "src_id": r["id"], "payload": system_payload(r, lvl)})
+        ev.append({"device_id": dev, "generation": gen, "kind": "system", "src_id": r["id"],
+                   "payload": system_payload(r, lvl)})
     return ev, (arows[-1]["id"] if arows else None), (srows[-1]["id"] if srows else None)
 
 
 def heartbeat(db, version=""):
     a, s = _max_ids(db)
     n = db.conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
-    ac = int(db.get_setting(K_AUDIT_CUR, "0") or 0)
-    return {"device_id": device_id(db), "kind": "heartbeat", "src_id": int(time.time()),
+    st = load_state(db)
+    ac = int(st.get("a_cur", 0))
+    return {"device_id": device_id(db), "generation": st.get("generation", ""), "kind": "heartbeat", "src_id": int(time.time()),
             "payload": {"time": datetime.now().isoformat(timespec="seconds"), "app_version": version or db.app_version or "",
-                        "audit_max_id": a, "audit_count": n, "system_max_id": s, "unsent_activity": max(0, a - ac),
+                        "audit_max_id": a, "audit_count": n, "system_max_id": s, "unsent_activity": max(0, a - ac), "generation": st.get("generation", ""),
                         "level": level(db)}}
 
 
@@ -218,14 +299,14 @@ class Client:
         if not self.token:
             self.login()
         try:
-            self._req("POST", "/rest/v1/%s?on_conflict=device_id,kind,src_id" % TABLE, events,
+            self._req("POST", "/rest/v1/%s?on_conflict=%s" % (TABLE, CONFLICT), events,
                       {"Authorization": "Bearer " + self.token,
                        "Prefer": "resolution=ignore-duplicates,return=minimal"})
         except MonitorError as e:
             if "HTTP 401" in str(e):
                 self.token = None
                 self.login()
-                self._req("POST", "/rest/v1/%s?on_conflict=device_id,kind,src_id" % TABLE, events,
+                self._req("POST", "/rest/v1/%s?on_conflict=%s" % (TABLE, CONFLICT), events,
                           {"Authorization": "Bearer " + self.token,
                            "Prefer": "resolution=ignore-duplicates,return=minimal"})
             else:
@@ -236,11 +317,14 @@ def sync_once(db, client=None, version="", heartbeat_due=True):
     """One upload round. Returns number of rows sent, or None when off / not configured.
     Never raises: a failure keeps the cursor, is logged once per 30 min, and is retried later."""
     try:
-        if not is_enabled(db):
+        st = load_state(db)
+        if st.get("enabled") != 1:
             return None
         cfg = load_config()
         if cfg is None:
             return None
+        check_generation(db, st)
+        st = load_state(db)
         client = client or Client(cfg)
         sent = 0
         while True:
@@ -248,22 +332,27 @@ def sync_once(db, client=None, version="", heartbeat_due=True):
             if not ev:
                 break
             client.insert(ev)
+            st = load_state(db)
             if amax is not None:
-                _raw_set(db, K_AUDIT_CUR, amax)
+                st["a_cur"], st["a_fp"], st["a_ts"] = amax, _fp(db, "audit_log", amax), _ts(db, "audit_log", amax)
             if smax is not None:
-                _raw_set(db, K_SYS_CUR, smax)
+                st["s_cur"], st["s_fp"], st["s_ts"] = smax, _fp(db, "system_log", smax), _ts(db, "system_log", smax)
+            save_state(db, st)
             sent += len(ev)
             if len(ev) < BATCH:
                 break
         if heartbeat_due:
             client.insert([heartbeat(db, version)])
-        _raw_set(db, K_LAST_OK, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        _raw_set(db, K_LAST_ERR, "")
+        st = load_state(db)
+        st.update(last_ok=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), last_err="")
+        save_state(db, st)
         return sent
     except Exception as e:
         msg = str(e)[:200]
         try:
-            _raw_set(db, K_LAST_ERR, msg)
+            st = load_state(db)
+            st["last_err"] = msg
+            save_state(db, st)
             import cloud_sync
             cloud_sync.log_sync_error(db, "remote_monitor_failed", msg)
         except Exception:
@@ -277,11 +366,12 @@ def status_text(db):
         return "المتابعة عن بعد غير مُعدّة (لا يوجد ملف remote_monitor.json). البرنامج يعمل محلياً كالمعتاد."
     if not is_enabled(db):
         return "المتابعة عن بعد متوقفة. الوجهة عند التفعيل: %s" % destination(cfg)
-    a, s = _max_ids(db)
-    pend = max(0, a - int(db.get_setting(K_AUDIT_CUR, "0") or 0)) + max(0, s - int(db.get_setting(K_SYS_CUR, "0") or 0))
+    st = load_state(db)
+    a, s_ = _max_ids(db)
+    pend = max(0, a - int(st.get("a_cur", 0))) + max(0, s_ - int(st.get("s_cur", 0)))
     t = "المتابعة عن بعد مفعّلة (%s) إلى %s. آخر إرسال ناجح: %s. بانتظار الإرسال: %d" % (
-        level(db), destination(cfg), db.get_setting(K_LAST_OK, "-") or "-", pend)
-    err = db.get_setting(K_LAST_ERR, "")
+        level(db), destination(cfg), st.get("last_ok") or "-", pend)
+    err = st.get("last_err", "")
     return t + ("\nآخر خطأ: " + err if err else "")
 
 
