@@ -372,6 +372,50 @@ def supplier_best_price(db, drug_id):
             "saving_vs_current": round(current - float(best["best_price"] or 0), 2)}
 
 
+def _full_window(by_day, days=90):
+    """Same shape get_daily_sales returns: every day present, missing = 0."""
+    end = date.today()
+    d = end - timedelta(days=days - 1)
+    result = {}
+    while d <= end:
+        result[d.isoformat()] = 0
+        d += timedelta(days=1)
+    for k, v in by_day.items():
+        if k in result:
+            result[k] = v
+    return result
+
+
+def _bulk_sales_and_purchases(db, days=90):
+    """({drug_id: {ISO day: units}} for completed sales in the window,
+    set of drug ids that have purchase history or None if it cannot be read)."""
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+    sales = {}
+    try:
+        rows = db.conn.execute(
+            """SELECT si.drug_id AS drug_id, s.date AS day,
+            COALESCE(SUM(si.qty_units), 0) AS units
+            FROM sale_items si JOIN sales s ON s.id = si.sale_id
+            WHERE s.status = 'completed' AND s.date >= ? AND s.date <= ?
+            GROUP BY si.drug_id, s.date""",
+            (start.isoformat(), end.isoformat())).fetchall()
+        for row in rows:
+            day = _parse_date(row["day"])
+            if day is None:
+                continue
+            m = sales.setdefault(row["drug_id"], {})
+            m[day.isoformat()] = m.get(day.isoformat(), 0) + int(row["units"] or 0)
+    except Exception:
+        sales = {}
+    try:
+        purchased = {r[0] for r in db.conn.execute(
+            "SELECT DISTINCT drug_id FROM purchase_items").fetchall()}
+    except Exception:
+        purchased = None
+    return sales, purchased
+
+
 def generate_reorder_list(db, horizon_days=30, lead_time_days=3, safety_days=2):
     """One row per drug, sorted by urgency (critical first).
 
@@ -387,9 +431,19 @@ def generate_reorder_list(db, horizon_days=30, lead_time_days=3, safety_days=2):
         drugs = db.search_drugs("", limit=10000)
     except Exception:
         return []
+    # v6.31: two bulk queries instead of two per drug. Drugs with no sales in the
+    # window share one precomputed "no sales" forecast; drugs never purchased skip
+    # the supplier lookup. Results are identical to the per-drug path.
+    sales_by_drug, purchased = _bulk_sales_and_purchases(db, days=90)
+    zero_fc = None
     for drug in drugs:
-        daily = get_daily_sales(db, drug["id"], days=90)
-        fc = forecast_demand(daily, horizon_days=horizon_days)
+        sold = sales_by_drug.get(drug["id"])
+        if sold is None:
+            if zero_fc is None:
+                zero_fc = forecast_demand(get_daily_sales(db, 0, days=90), horizon_days=horizon_days)
+            fc = dict(zero_fc)
+        else:
+            fc = forecast_demand(_full_window(sold, days=90), horizon_days=horizon_days)
         rate = fc["daily_rate"]
         stock = int(drug.get("stock_units") or 0)
         rop = reorder_point(rate, lead_time_days, safety_days)
@@ -407,7 +461,7 @@ def generate_reorder_list(db, horizon_days=30, lead_time_days=3, safety_days=2):
             urgency = "عادية"
         else:
             urgency = "مستقرة"
-        best = supplier_best_price(db, drug["id"])
+        best = supplier_best_price(db, drug["id"]) if (purchased is None or drug["id"] in purchased) else None
         try:
             from database import units_per_box
             upb = units_per_box(drug)
