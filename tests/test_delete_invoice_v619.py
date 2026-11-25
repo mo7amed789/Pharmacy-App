@@ -157,7 +157,7 @@ check("reports dialog no longer double-logs (audit moved into DB)",
 # ---------- 5) structural: DB + service worker ----------
 dbpy = open(os.path.join(SRC, "database.py"), encoding="utf-8").read()
 check("return_sale itself writes audit_log (every caller logged)",
-      'INSERT INTO audit_log (user, action, details, created_at)' in dbpy
+      '_audit_row(user, "return_sale"' in dbpy
       and '"return_sale"' in dbpy)
 sw = open(os.path.join(SRC, "sw.js"), encoding="utf-8").read()
 check("sw cache bumped so phones fetch the v6.19 page",
