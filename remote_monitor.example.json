@@ -1,0 +1,6 @@
+{
+  "url": "https://YOUR-PROJECT-REF.supabase.co",
+  "anon_key": "YOUR-PUBLISHABLE-KEY",
+  "email": "device-user@example.com",
+  "password": "DEVICE-USER-PASSWORD"
+}

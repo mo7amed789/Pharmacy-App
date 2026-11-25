@@ -641,6 +641,14 @@ class App:
         import automation
         self._automation = automation.Automation(self.db.path)
         self._automation.start()
+        # owner remote monitoring: the thread only sends once the owner has turned it on
+        # (one-time consent in Settings); offline it just waits and retries.
+        try:
+            import remote_monitor
+            self._remote_monitor = remote_monitor.Monitor(self.db.path, version=getattr(self.db, "app_version", ""))
+            self._remote_monitor.start()
+        except Exception:
+            self._remote_monitor = None
 
     # ---------- thread-safe UI queue ----------
     def _ui_post(self, fn):
@@ -5905,6 +5913,22 @@ class App:
         ttk.Button(_sf, text="⬇️ تصدير سجل النظام (CSV)",
                    command=lambda: self.export_log_csv("system")).pack(side="left", padx=6)
         self.txt_syslog, self.txt_syslog_detail = self._make_log_view(f, 10, "sys")
+        # ---------- remote monitoring (owner only, off until the owner agrees) ----------
+        if self.is_admin:
+            ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
+            ttk.Label(f, text="📡 المتابعة عن بعد (للمالك فقط):", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+            self.lbl_remote = ttk.Label(f, text="", style="Muted.TLabel", wraplength=700, justify="left")
+            self.lbl_remote.pack(anchor="w", pady=2)
+            _rf = ttk.Frame(f)
+            _rf.pack(anchor="w", pady=2)
+            ttk.Label(_rf, text="مستوى التفاصيل:").pack(side="left")
+            self.cb_remote_level = ttk.Combobox(_rf, width=10, state="readonly", values=["summary", "full"])
+            self.cb_remote_level.set("summary")
+            self.cb_remote_level.pack(side="left", padx=4)
+            ttk.Button(_rf, text="👁️ اعرض ما سيُرسل ووجهته", command=self.remote_preview).pack(side="left", padx=4)
+            ttk.Button(_rf, text="✅ تفعيل", command=self.remote_enable).pack(side="left", padx=4)
+            ttk.Button(_rf, text="⛔ إيقاف", command=self.remote_disable).pack(side="left", padx=4)
+            self.remote_refresh()
         self.system_log_refresh()
 
     def save_pharmacy_name(self):
@@ -6456,6 +6480,54 @@ class App:
         det.delete("1.0", "end")
         det.insert("1.0", "\n".join(lines))
         det.configure(state="disabled")
+
+    def remote_refresh(self):
+        try:
+            import remote_monitor
+            self.lbl_remote.config(text=remote_monitor.status_text(self.db))
+            if remote_monitor.is_enabled(self.db):
+                self.cb_remote_level.set(remote_monitor.level(self.db))
+        except Exception:
+            pass
+
+    def _remote_preview_text(self):
+        import json as _json
+        import remote_monitor
+        lvl = self.cb_remote_level.get() or "summary"
+        pv = remote_monitor.preview(self.db, lvl)
+        head = "الوجهة: %s\nالمستوى: %s\nلن يُرسل أي سجل قديم، فقط ما يُسجَّل بعد التفعيل.\n" % (
+            pv["destination"] or "غير مُعدّة", lvl)
+        if lvl == "summary":
+            head += "ملخص: المستخدم والدور والإجراء والفرع والوقت، بدون تفاصيل الأسعار أو العملاء أو قبل/بعد.\n"
+        else:
+            head += "كامل: يشمل التفاصيل وقبل/بعد (قد تحتوي أسماء عملاء وأسعار). لا كلمات سر ولا مفاتيح أبداً.\n"
+        return pv, head + "\nأمثلة مما سيُرسل:\n" + _json.dumps(pv["sample"], ensure_ascii=False, indent=1)[:1800]
+
+    def remote_preview(self):
+        try:
+            pv, txt = self._remote_preview_text()
+        except Exception as e:
+            messagebox.showerror("المتابعة عن بعد", str(e))
+            return
+        if not pv["configured"]:
+            txt = "لم يتم إعداد remote_monitor.json بعد، فلن يُرسل شيء.\n\n" + txt
+        messagebox.showinfo("ما الذي سيُرسل", txt)
+
+    def remote_enable(self):
+        import remote_monitor
+        if remote_monitor.load_config() is None:
+            messagebox.showerror("المتابعة عن بعد", "ملف remote_monitor.json غير موجود أو ناقص، لن يُرسل شيء.")
+            return
+        pv, txt = self._remote_preview_text()
+        if not messagebox.askyesno("تفعيل المتابعة عن بعد", txt + "\n\nتفعيل الإرسال التلقائي من الآن؟"):
+            return
+        remote_monitor.enable(self.db, self.cb_remote_level.get() or "summary")
+        self.remote_refresh()
+
+    def remote_disable(self):
+        import remote_monitor
+        remote_monitor.disable(self.db)
+        self.remote_refresh()
 
     def system_log_refresh(self):
         if not hasattr(self, "txt_syslog"):

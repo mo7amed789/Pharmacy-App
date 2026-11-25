@@ -93,12 +93,8 @@ def _run_dialog(title, message, kind, parent, buttons):
              font=ui_theme.font(13, bold=True),
              wraplength=380, justify="left").pack(side="left", padx=10)
 
-    tk.Label(win, text=str(message), bg=bg, fg=pal["text"],
-             font=ui_theme.font(11), wraplength=420, justify="left",
-             anchor="w", padx=12, pady=8).pack(fill="x", padx=16, pady=(10, 4))
-
     btns = tk.Frame(win, bg=pal["card_bg"])
-    btns.pack(pady=(8, 14))
+    btns.pack(side="bottom", pady=(8, 14))
     first = None
     for text, value, bkind in buttons:
         b = ttk.Button(btns, text=text,
@@ -107,6 +103,31 @@ def _run_dialog(title, message, kind, parent, buttons):
         b.pack(side="left", padx=6)
         if first is None:
             first = b
+
+    # Long messages (previews, details) scroll inside a bounded box so the buttons always stay
+    # reachable on small screens. The buttons are packed first, at the bottom.
+    msg = str(message)
+    try:
+        sh = root.winfo_screenheight()
+    except Exception:
+        sh = 768
+    max_lines = max(6, min(18, (sh - 360) // 22))
+    if msg.count("\n") + 1 > max_lines or len(msg) > 1100:
+        box = tk.Frame(win, bg=bg)
+        box.pack(fill="both", expand=True, padx=16, pady=(10, 4))
+        sb = ttk.Scrollbar(box, orient="vertical")
+        txt = tk.Text(box, bg=bg, fg=pal["text"], font=ui_theme.font(11), wrap="word",
+                      width=52, height=max_lines, relief="flat", yscrollcommand=sb.set,
+                      padx=12, pady=8, highlightthickness=0)
+        sb.config(command=txt.yview)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        txt.insert("1.0", msg)
+        txt.config(state="disabled")
+    else:
+        tk.Label(win, text=str(message), bg=bg, fg=pal["text"],
+                 font=ui_theme.font(11), wraplength=420, justify="left",
+                 anchor="w", padx=12, pady=8).pack(fill="x", padx=16, pady=(10, 4))
 
     win.protocol("WM_DELETE_WINDOW", win.destroy)
     win.bind("<Escape>", lambda e: win.destroy())
