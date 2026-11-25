@@ -131,11 +131,12 @@ def st_none():
 
 
 def _cursor_after(db, table, ts, mx):
-    """Highest id whose row is not newer than the last uploaded row's time (forward only: rows
-    created after that moment, e.g. right after a restore, are still uploaded)."""
+    """Highest id whose row is STRICTLY older than the last uploaded row's time. Timestamps have
+    1-second resolution, so rows from that same second are sent again in the new generation: a
+    possible duplicate, never a silent loss."""
     if not ts:
         return mx
-    r = db.conn.execute("SELECT COALESCE(MAX(id),0) FROM %s WHERE created_at<=?" % table, (ts,)).fetchone()
+    r = db.conn.execute("SELECT COALESCE(MAX(id),0) FROM %s WHERE created_at<?" % table, (ts,)).fetchone()
     return r[0] if r else mx
 
 
