@@ -179,7 +179,9 @@ def enable(db, lvl="summary"):
     a, s = _max_ids(db)
     st.update(enabled=1, level=lvl, generation=uuid.uuid4().hex[:12], a_cur=a, s_cur=s,
               a_fp=_fp(db, "audit_log", a), s_fp=_fp(db, "system_log", s), last_err="",
-              a_ts=_ts(db, "audit_log", a), s_ts=_ts(db, "system_log", s))
+              a_ts=_ts(db, "audit_log", a), s_ts=_ts(db, "system_log", s),
+              em_a_cur=a, em_s_cur=s, em_a_ts=_ts(db, "audit_log", a), em_s_ts=_ts(db, "system_log", s),
+              em_last_report=time.time())
     if not st.get("device_id"):
         st["device_id"] = "pc-" + uuid.uuid4().hex[:12]
     save_state(db, st)
@@ -399,6 +401,11 @@ class Monitor(threading.Thread):
                         r = sync_once(db, version=self.version, heartbeat_due=hb)
                         if r is not None and hb:
                             self._last_hb = time.time()
+                        try:
+                            import email_report
+                            email_report.tick(db, version=self.version)
+                        except Exception:
+                            pass
                 finally:
                     db.close()
             except Exception:
