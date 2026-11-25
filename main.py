@@ -1091,6 +1091,24 @@ class App:
         inner.bind("<Configure>", _on_conf)
         canvas.bind("<Configure>", _on_conf)
 
+        # v6.31: a forced inner height hides later content growth (no <Configure>
+        # fires when only the *requested* height changes), which squeezed tables
+        # to nothing on short screens. Re-check the requested height cheaply.
+        _last = {"h": -1}
+
+        def _resync():
+            try:
+                if not canvas.winfo_exists():
+                    return
+                h = inner.winfo_reqheight()
+                if h != _last["h"]:
+                    _last["h"] = h
+                    _on_conf()
+                canvas.after(300, _resync)
+            except Exception:
+                pass
+        canvas.after(100, _resync)
+
         def _is_inside(widget):
             w = widget
             while w is not None:
@@ -1288,91 +1306,100 @@ class App:
             self.notebook.add(tab, text="🛒 الكاشير (POS)")
         # v6.21: scrollable so nothing is hidden on small screens.
         tab = self._scrollable_tab("🛒 الكاشير (POS)", tab)
-        # Big scan / search bar at the top
+        # v6.31: three clear zones. 1) scan/search bar, 2) results | current invoice,
+        # 3) one checkout panel (details | totals | actions). Short headings; the
+        # long explanations moved out (F1 shortcuts dialog covers them).
         top = ttk.Frame(tab)
-        top.pack(fill="x", padx=10, pady=(10, 4))
-        ttk.Label(top, text="🔎 باركود / بحث:", font=("Segoe UI", 13, "bold")).pack(side="left")
-        self.e_barcode = ttk.Entry(top, width=30, font=("Segoe UI", 16))
+        top.pack(fill="x", padx=10, pady=(10, 2))
+        ttk.Label(top, text="🔎 باركود:", font=("Segoe UI", 13, "bold")).pack(side="left")
+        self.e_barcode = ttk.Entry(top, width=20, font=("Segoe UI", 16))
         self.e_barcode.pack(side="left", padx=6)
         self.e_barcode.bind("<Return>", lambda e: self.pos_scan())
-        ttk.Button(top, text="إضافة بالباركود", command=self.pos_scan,
+        ttk.Button(top, text="إضافة", command=self.pos_scan,
                    style="Accent.TButton").pack(side="left", padx=4)
-        ttk.Label(top, text="بحث بالاسم / المادة الفعالة:").pack(side="left", padx=(14, 2))
-        self.e_search = ttk.Entry(top, width=22, font=("Segoe UI", 12))
+        ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=14, pady=2)
+        ttk.Label(top, text="بحث بالاسم:", font=("Segoe UI", 12, "bold")).pack(side="left", padx=(0, 4))
+        self.e_search = ttk.Entry(top, width=18, font=("Segoe UI", 12))
         self.e_search.pack(side="left")
         self.e_search.bind("<KeyRelease>", lambda e: self.pos_search_refresh())
         ttk.Button(top, text="بحث", command=self.pos_search_refresh).pack(side="left", padx=4)
-        ttk.Label(tab, text="F2 للانتقال للباركود  •  F9 لإتمام البيع  •  F1 للاختصارات  •  اضغط مرتين على الدواء لإضافته للفاتورة",
+        ttk.Label(tab, text="F2 باركود  •  F9 إتمام البيع  •  F1 اختصارات",
                   style="Muted.TLabel").pack(anchor="w", padx=12)
 
+        # v5.0: the checkout panel is packed BEFORE the expanding middle area (side=bottom)
+        # so it always keeps its full height and the tables take the rest.
+        panel = tk.Frame(tab, bg=self.pal["card_bg"], highlightbackground=self.pal["border"],
+                         highlightthickness=1, padx=12, pady=10)
+        panel.pack(side="bottom", fill="x", padx=10, pady=(4, 10))
+        self.pos_panel = panel
         mid = ttk.Frame(tab)
-        # v5.0: mid is packed AFTER the totals panel (see below) so the
-        # panel always gets its full height and mid takes the rest —
-        # packing mid first let it swallow the panel's second row.
         self._pos_mid = mid
-        left = ttk.Frame(mid)
-        left.pack(side="left", fill="both", expand=True)
-        ttk.Label(left, text="نتائج البحث (اضغط مرتين للإضافة):",
-                  style="Section.TLabel").pack(anchor="w")
-        # v6.4: Excel-style table, not a mashed one-line Listbox.
-        _sf, self.list_search = self.make_drug_search_tree(left, height=8)
-        _sf.pack(fill="both", expand=True)
-        self.list_search.bind("<Double-Button-1>", lambda e: self.pos_add_selected())
-        self.list_search.bind("<Return>", lambda e: self.pos_add_selected())
-        ttk.Button(left, text="➕ إضافة المحدد للفاتورة", command=self.pos_add_selected,
-                   style="Accent.TButton").pack(pady=6, anchor="w")
-        self.lbl_alt = ttk.Label(left, text="بدائل بنفس المادة الفعالة تظهر هنا عند اختيار دواء.",
-                                 wraplength=460, style="Muted.TLabel", font=("Segoe UI", 11))
-        self.lbl_alt.pack(anchor="w", pady=4)
-        unit_row = ttk.Frame(left)
-        unit_row.pack(fill="x", pady=6)
-        ttk.Label(unit_row, text="وحدة البيع:", font=("Segoe UI", 11, "bold")).pack(side="left")
+        mid.columnconfigure(0, weight=1, uniform="pos")
+        mid.columnconfigure(1, weight=1, uniform="pos")
+        mid.rowconfigure(0, weight=1)
+
+        # ---- zone 2a: search results + add controls ----
+        left = ttk.LabelFrame(mid, text="نتائج البحث", padding=8)
+        left.grid(row=0, column=0, sticky="nsew")
+        # (controls are packed from the bottom first so a short window shrinks the
+        # table, never hides the buttons)
+        self.lbl_alt = ttk.Label(left, text="", wraplength=460, style="Muted.TLabel",
+                                 font=("Segoe UI", 11))
+        self.lbl_alt.pack(side="bottom", anchor="w", pady=(6, 0))
+        add_row = ttk.Frame(left)
+        add_row.pack(side="bottom", fill="x", pady=(8, 0))
         self.var_unit = tk.StringVar(value="box")
-        ttk.Radiobutton(unit_row, text="علبة (Box)", variable=self.var_unit, value="box").pack(side="left")
-        ttk.Radiobutton(unit_row, text="شريط (Strip)", variable=self.var_unit, value="strip").pack(side="left")
-        ttk.Radiobutton(unit_row, text="حبة (Pill)", variable=self.var_unit, value="pill").pack(side="left")
-        ttk.Label(unit_row, text="الكمية:", font=("Segoe UI", 11, "bold")).pack(side="left", padx=(12, 2))
-        self.e_qty = ttk.Entry(unit_row, width=6, font=("Segoe UI", 12))
+        ttk.Radiobutton(add_row, text="علبة", variable=self.var_unit, value="box").pack(side="left")
+        ttk.Radiobutton(add_row, text="شريط", variable=self.var_unit, value="strip").pack(side="left")
+        ttk.Radiobutton(add_row, text="حبة", variable=self.var_unit, value="pill").pack(side="left")
+        ttk.Label(add_row, text="الكمية:", font=("Segoe UI", 11, "bold")).pack(side="left", padx=(12, 2))
+        self.e_qty = ttk.Entry(add_row, width=5, font=("Segoe UI", 12))
         self.e_qty.pack(side="left")
         self.e_qty.insert(0, "1")
+        ttk.Button(add_row, text="➕ إضافة للفاتورة", command=self.pos_add_selected,
+                   style="Accent.TButton").pack(side="left", padx=10)
+        _sf, self.list_search = self.make_drug_search_tree(left, height=3)
+        _sf.pack(side="top", fill="both", expand=True)
+        self.list_search.bind("<Double-Button-1>", lambda e: self.pos_add_selected())
+        self.list_search.bind("<Return>", lambda e: self.pos_add_selected())
 
-        right = ttk.Frame(mid)
-        right.pack(side="right", fill="both", expand=True, padx=(12, 0))
-        ttk.Label(right, text="فاتورة البيع الحالية:", style="Section.TLabel").pack(anchor="w")
+        # ---- zone 2b: current invoice ----
+        right = ttk.LabelFrame(mid, text="الفاتورة الحالية", padding=8)
+        right.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+        btns = ttk.Frame(right)
+        btns.pack(side="bottom", fill="x", pady=(8, 0))
         cols = ("name", "ar", "unit", "qty", "price", "disc", "total", "stock")
-        self.tree_cart = ttk.Treeview(right, columns=cols, show="headings", height=9)
-        for c, w in zip(cols, (150, 100, 60, 50, 80, 70, 90, 70)):
+        self.tree_cart = ttk.Treeview(right, columns=cols, show="headings", height=3)
+        for c, w in zip(cols, (110, 90, 50, 45, 70, 60, 75, 60)):
             self.tree_cart.heading(c, text={"name": "الدواء", "ar": "عربي", "unit": "الوحدة",
                                             "qty": "الكمية", "price": "سعر الوحدة",
                                             "disc": "خصم السطر", "total": "الإجمالي",
                                             "stock": "المخزون"}[c])
             self.tree_cart.column(c, width=w)
-        self.tree_cart.pack(fill="both", expand=True)
+        self.tree_cart.pack(side="top", fill="both", expand=True)
         ui_theme.style_treeview(self.tree_cart, self.theme_name)
-        btns = ttk.Frame(right)
-        btns.pack(fill="x", pady=6)
-        ttk.Button(btns, text="💸 خصم السطر", command=self.pos_line_discount_dialog).pack(side="left", padx=2)
-        ttk.Button(btns, text="🗑 حذف السطر المحدد", command=self.pos_remove_line,
+        line_btns = ttk.Frame(btns)
+        line_btns.pack(fill="x")
+        ttk.Button(line_btns, text="💸 خصم", command=self.pos_line_discount_dialog).pack(side="left", padx=2)
+        ttk.Button(line_btns, text="🗑 حذف", command=self.pos_remove_line,
                    style="Danger.TButton").pack(side="left", padx=2)
-        ttk.Button(btns, text="↩ استرجاع السطر المحذوف", command=self.pos_restore_line,
+        ttk.Button(line_btns, text="↩ استرجاع", command=self.pos_restore_line,
                    style="Success.TButton").pack(side="left", padx=2)
-        ttk.Button(btns, text="مسح الفاتورة", command=self.pos_clear_cart,
+        inv_btns = ttk.Frame(btns)
+        inv_btns.pack(fill="x", pady=(6, 0))
+        ttk.Button(inv_btns, text="⏸ تعليق", command=self.pos_hold).pack(side="left", padx=2)
+        ttk.Button(inv_btns, text="استدعاء", command=self.pos_recall).pack(side="left", padx=2)
+        ttk.Button(inv_btns, text="مسح الكل", command=self.pos_clear_cart,
                    style="Warning.TButton").pack(side="left", padx=2)
-        ttk.Button(btns, text="⏸ تعليق الفاتورة (Hold)", command=self.pos_hold).pack(side="left", padx=2)
-        ttk.Button(btns, text="↩ استدعاء فاتورة معلقة", command=self.pos_recall).pack(side="left", padx=2)
 
-        # Total panel — huge, always visible. v5.0: TWO rows — the old
-        # single row was 1689px wide in a 1244px tab, so Tk squeezed
-        # "إتمام البيع" and "عرض الإيصال" to 1px (invisible) at 1280x800.
-        panel = tk.Frame(tab, bg=self.pal["card_bg"], highlightbackground=self.pal["border"],
-                         highlightthickness=1, padx=12, pady=10)
-        panel.pack(fill="x", padx=10, pady=(4, 10))
-        self.pos_panel = panel
-        row1 = ttk.Frame(panel, style="Card.TFrame")
+        # ---- zone 3: checkout = details | totals | actions ----
+        details = ttk.Frame(panel, style="Card.TFrame")
+        details.pack(side="left", anchor="n")
+        row1 = ttk.Frame(details, style="Card.TFrame")
         row1.pack(fill="x")
         ttk.Label(row1, text="العميل:", style="Card.TLabel").pack(side="left")
         self.var_customer = tk.StringVar(value="عميل نقدي")
-        self.cb_customer = ttk.Combobox(row1, textvariable=self.var_customer, width=20,
+        self.cb_customer = ttk.Combobox(row1, textvariable=self.var_customer, width=18,
                                         values=["عميل نقدي"] + [c["name"] for c in self.db.customers()])
         self.cb_customer.pack(side="left", padx=4)
         ttk.Label(row1, text="خصم (ج.م):", style="Card.TLabel").pack(side="left", padx=(10, 2))
@@ -1380,36 +1407,38 @@ class App:
         self.e_discount.pack(side="left")
         self.e_discount.insert(0, "0")
         self.e_discount.bind("<KeyRelease>", lambda e: self.refresh_pos_totals())
-        ttk.Label(row1, text="طريقة الدفع:", style="Card.TLabel").pack(side="left", padx=(10, 2))
+        row2 = ttk.Frame(details, style="Card.TFrame")
+        row2.pack(fill="x", pady=(8, 0))
+        ttk.Label(row2, text="الدفع:", style="Card.TLabel").pack(side="left")
         self.var_pay = tk.StringVar(value="cash")
-        ttk.Radiobutton(row1, text="نقدي", variable=self.var_pay, value="cash", style="Card.TRadiobutton").pack(side="left")
-        ttk.Radiobutton(row1, text="فيزا / كارت", variable=self.var_pay, value="card", style="Card.TRadiobutton").pack(side="left")
-        ttk.Radiobutton(row1, text="آجل (عميل)", variable=self.var_pay, value="credit", style="Card.TRadiobutton").pack(side="left")
-        ttk.Label(row1, text="المدفوع:", style="Card.TLabel").pack(side="left", padx=(10, 2))
-        self.e_paid = ttk.Entry(row1, width=10, font=("Segoe UI", 12))
+        ttk.Radiobutton(row2, text="نقدي", variable=self.var_pay, value="cash", style="Card.TRadiobutton").pack(side="left")
+        ttk.Radiobutton(row2, text="فيزا", variable=self.var_pay, value="card", style="Card.TRadiobutton").pack(side="left")
+        ttk.Radiobutton(row2, text="آجل", variable=self.var_pay, value="credit", style="Card.TRadiobutton").pack(side="left")
+        ttk.Label(row2, text="المدفوع:", style="Card.TLabel").pack(side="left", padx=(10, 2))
+        self.e_paid = ttk.Entry(row2, width=10, font=("Segoe UI", 12))
         self.e_paid.pack(side="left")
         self.e_paid.bind("<KeyRelease>", lambda e: self.refresh_pos_totals())
-        totals = ttk.Frame(row1, style="Card.TFrame")
-        totals.pack(side="left", padx=14)
+
+        ttk.Separator(panel, orient="vertical").pack(side="left", fill="y", padx=14)
+        side = ttk.Frame(panel, style="Card.TFrame")
+        side.pack(side="left", fill="x", expand=True, anchor="n")
+        totals = ttk.Frame(side, style="Card.TFrame")
+        totals.pack(anchor="w")
         self.lbl_subtotal = ttk.Label(totals, text="المجموع الفرعي: 0.00 ج.م", style="CardMuted.TLabel")
         self.lbl_subtotal.pack(anchor="w")
         self.lbl_total = ttk.Label(totals, text="الإجمالي: 0.00 ج.م", style="CardHuge.TLabel")
         self.lbl_total.pack(anchor="w")
         self.lbl_change = ttk.Label(totals, text="الباقي للعميل: —", style="CardChange.TLabel")
         self.lbl_change.pack(anchor="w")
-        row2 = ttk.Frame(panel, style="Card.TFrame")
-        row2.pack(fill="x", pady=(8, 0))
-        ttk.Button(row2, text="✅ إتمام البيع (F9)", command=self.pos_complete_sale,
-                   style="Success.TButton").pack(side="left", padx=4)
-        ttk.Button(row2, text="🧾 عرض الإيصال", command=self.pos_show_receipt).pack(side="left", padx=4)
-        ttk.Label(row2, text="F9 لإتمام البيع  •  الباقي يظهر فوراً أثناء الكتابة",
-                  style="CardMuted.TLabel").pack(side="left", padx=12)
+        actions = ttk.Frame(side, style="Card.TFrame")
+        actions.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions, text="✅ إتمام البيع (F9)", command=self.pos_complete_sale,
+                   style="Success.TButton").pack(side="left", fill="x", expand=True)
+        ttk.Button(actions, text="🧾 عرض الإيصال", command=self.pos_show_receipt).pack(side="left", fill="x", expand=True, padx=(6, 0))
         # v5.0: F9 only completes a sale when the POS tab is current —
         # before, it fired on every tab and popped "الفاتورة فارغة".
         self.root.bind("<F9>", lambda e: self._f9_complete_sale())
-        # v5.0: pack the middle (expanding) area last — after the panel
-        # — so the panel keeps its full two-row height at 1280x800.
-        mid.pack(fill="both", expand=True, padx=10)
+        mid.pack(fill="both", expand=True, padx=10, pady=(6, 0))
         self.pos_search_refresh()
         self.e_barcode.focus_set()
 
@@ -1462,7 +1491,7 @@ class App:
             txt += " | ".join("%s %s" % (a["trade_en"], money(a["sell_price"])) for a in alts[:5])
             self.lbl_alt.config(text=txt)
         else:
-            self.lbl_alt.config(text="لا توجد بدائل مسجلة بنفس المادة الفعالة.")
+            self.lbl_alt.config(text="")
 
     def pos_add_drug(self, drug, pack_level, qty):
         # v5.0: reject impossible quantities at the POS boundary
