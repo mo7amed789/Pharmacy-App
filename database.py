@@ -405,6 +405,7 @@ class DB:
         self._migrate_v6_2()
         self._migrate_step2()
         self._migrate_v6_3()
+        self._migrate_roles_branches()
         self._prune_audit_log()
         self.seed_if_empty()
         with DB._INIT_LOCK:
@@ -732,6 +733,147 @@ class DB:
                 self.conn.execute(sql)
         self.conn.commit()
 
+    def _migrate_roles_branches(self):
+        """Additive only: branches, attendance, users.branch_id, shifts.branch_id.
+        Existing rows keep branch_id NULL (= no branch)."""
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS branches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL, address TEXT DEFAULT '',
+            active INTEGER DEFAULT 1, created_at TEXT DEFAULT '')""")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL, branch_id INTEGER,
+            check_in TEXT NOT NULL, check_out TEXT DEFAULT '',
+            note TEXT DEFAULT '', created_by TEXT DEFAULT '')""")
+        for table in ("users", "shifts"):
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
+            if "branch_id" not in cols:
+                self.conn.execute("ALTER TABLE %s ADD COLUMN branch_id INTEGER" % table)
+        self.conn.commit()
+
+    # ---------- roles / branches / attendance ----------
+    def user_role(self, username):
+        r = self.conn.execute("SELECT role FROM users WHERE username=?", (username,)).fetchone()
+        return r["role"] if r else None
+
+    def _require_admin(self, actor):
+        if self.user_role(actor) != "admin":
+            raise PermissionError("هذه العملية للمدير فقط")
+
+    def list_users(self, actor):
+        self._require_admin(actor)
+        return [dict(r) for r in self.conn.execute(
+            "SELECT id, username, role, full_name, branch_id FROM users ORDER BY username").fetchall()]
+
+    def list_branches(self, active_only=False):
+        q = "SELECT * FROM branches" + (" WHERE active=1" if active_only else "") + " ORDER BY name"
+        return [dict(r) for r in self.conn.execute(q).fetchall()]
+
+    def add_branch(self, actor, name, address=""):
+        self._require_admin(actor)
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("اسم الفرع مطلوب")
+        try:
+            c = self.conn.execute("INSERT INTO branches (name, address, active, created_at) VALUES (?,?,1,?)",
+                                  (name, (address or "").strip(), _now()))
+        except sqlite3.IntegrityError:
+            raise ValueError("يوجد فرع بنفس الاسم")
+        self.conn.commit()
+        return c.lastrowid
+
+    def set_branch_active(self, actor, branch_id, active):
+        self._require_admin(actor)
+        self.conn.execute("UPDATE branches SET active=? WHERE id=?", (1 if active else 0, branch_id))
+        self.conn.commit()
+
+    def set_user_branch(self, actor, username, branch_id):
+        self._require_admin(actor)
+        if branch_id is not None and not self.conn.execute(
+                "SELECT 1 FROM branches WHERE id=?", (branch_id,)).fetchone():
+            raise ValueError("الفرع غير موجود")
+        self.conn.execute("UPDATE users SET branch_id=? WHERE username=?", (branch_id, username))
+        self.conn.commit()
+
+    def user_branch_id(self, username):
+        r = self.conn.execute("SELECT branch_id FROM users WHERE username=?", (username,)).fetchone()
+        return r["branch_id"] if r else None
+
+    def attendance_open_for(self, username):
+        r = self.conn.execute(
+            "SELECT * FROM attendance WHERE username=? AND check_out='' ORDER BY id DESC LIMIT 1",
+            (username,)).fetchone()
+        return dict(r) if r else None
+
+    def check_in(self, username):
+        """An employee records their own attendance. One open record at a time."""
+        if self.user_role(username) is None:
+            raise ValueError("المستخدم غير موجود")
+        if self.attendance_open_for(username):
+            raise ValueError("تم تسجيل الحضور بالفعل، سجّل الانصراف أولاً")
+        c = self.conn.execute(
+            "INSERT INTO attendance (username, branch_id, check_in, created_by) VALUES (?,?,?,?)",
+            (username, self.user_branch_id(username), _now(), username))
+        self.conn.commit()
+        return c.lastrowid
+
+    def check_out(self, username):
+        row = self.attendance_open_for(username)
+        if not row:
+            raise ValueError("لا يوجد حضور مفتوح لتسجيل الانصراف")
+        self.conn.execute("UPDATE attendance SET check_out=? WHERE id=?", (_now(), row["id"]))
+        self.conn.commit()
+        return row["id"]
+
+    @staticmethod
+    def _parse_dt(value, label):
+        value = (value or "").strip().replace("T", " ")
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                pass
+        raise ValueError("%s: اكتب التاريخ والوقت بالشكل 2026-11-25 09:00" % label)
+
+    def attendance_add_manual(self, actor, username, check_in, check_out, note=""):
+        """Admin records a shift/attendance for an employee."""
+        self._require_admin(actor)
+        if self.user_role(username) is None:
+            raise ValueError("المستخدم غير موجود")
+        a = self._parse_dt(check_in, "وقت الحضور")
+        b = self._parse_dt(check_out, "وقت الانصراف") if (check_out or "").strip() else None
+        if b is not None and b <= a:
+            raise ValueError("وقت الانصراف يجب أن يكون بعد الحضور")
+        c = self.conn.execute(
+            "INSERT INTO attendance (username, branch_id, check_in, check_out, note, created_by) VALUES (?,?,?,?,?,?)",
+            (username, self.user_branch_id(username), a.isoformat(timespec="seconds"),
+             b.isoformat(timespec="seconds") if b else "", (note or "").strip(), actor))
+        self.conn.commit()
+        return c.lastrowid
+
+    def attendance_report(self, actor, date_from, date_to, username=None):
+        """Admin: anyone (or all). Anyone else: only their own rows."""
+        if self.user_role(actor) != "admin":
+            username = actor
+        d1 = self._parse_dt(date_from + " 00:00", "من")
+        d2 = self._parse_dt(date_to + " 23:59", "إلى")
+        q = ("SELECT a.*, b.name AS branch_name FROM attendance a LEFT JOIN branches b ON b.id=a.branch_id "
+             "WHERE a.check_in>=? AND a.check_in<=?")
+        args = [d1.isoformat(timespec="seconds"), d2.isoformat(timespec="seconds")]
+        if username:
+            q += " AND a.username=?"
+            args.append(username)
+        rows = []
+        for r in self.conn.execute(q + " ORDER BY a.check_in DESC", args).fetchall():
+            d = dict(r)
+            try:
+                end = datetime.fromisoformat(d["check_out"]) if d["check_out"] else None
+                d["hours"] = round((end - datetime.fromisoformat(d["check_in"])).total_seconds() / 3600, 2) if end else None
+            except ValueError:
+                d["hours"] = None
+            rows.append(d)
+        return rows
+
     def _migrate_v6_3(self):
         """v6.3 — additive only, safe on an existing pharmacy.db:
         drugs.discount_type ('none'|'percent'|'amount') +
@@ -910,7 +1052,7 @@ class DB:
                           (_hash(new_password), username))
         self.conn.commit()
 
-    def create_user(self, username, password, role, full_name=""):
+    def create_user(self, username, password, role, full_name="", branch_id=None):
         """Create a user with a PBKDF2 hash (v5.0). Raises on duplicate."""
         if not (username or "").strip():
             raise ValueError("اسم المستخدم مطلوب")
@@ -922,8 +1064,8 @@ class DB:
             raise ValueError("الصلاحية يجب أن تكون admin أو cashier")
         c = self.conn.cursor()
         c.execute(
-            "INSERT INTO users (username, password_hash, role, full_name) VALUES (?,?,?,?)",
-            (username.strip(), _hash(password), role, full_name.strip()))
+            "INSERT INTO users (username, password_hash, role, full_name, branch_id) VALUES (?,?,?,?,?)",
+            (username.strip(), _hash(password), role, full_name.strip(), branch_id))
         self.conn.commit()
         return c.lastrowid
 
@@ -2329,8 +2471,8 @@ class DB:
             raise ValueError("توجد وردية مفتوحة بالفعل لهذا الكاشير")
         c = self.conn.cursor()
         c.execute(
-            "INSERT INTO shifts (cashier, opened_at, opening_float, status) VALUES (?,?,?,?)",
-            (cashier, _now(), opening_float, "open"))
+            "INSERT INTO shifts (cashier, opened_at, opening_float, status, branch_id) VALUES (?,?,?,?,?)",
+            (cashier, _now(), opening_float, "open", self.user_branch_id(cashier)))
         self.conn.commit()
         return c.lastrowid
 
