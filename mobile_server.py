@@ -865,7 +865,12 @@ def _make_handler(db_path, req_log=None):
             # across threads); WRITE_LOCK, WAL and the PRAGMAs in
             # DB.__init__ are unchanged.
             DB.ensure_initialized(db_path)
-            return DB(path=db_path, init=False)
+            d = DB(path=db_path, init=False)
+            emp = getattr(self, "employee", None)
+            if emp:  # employee/admin accounts work inside their own branch
+                b, _u = d.scope_for_user(emp["username"], own_only=False)
+                d.set_scope(b)
+            return d
 
         def _pin_from_request(self):
             # v6.2: header ONLY. The old ?pin= query-string fallback
@@ -1433,6 +1438,12 @@ def _make_handler(db_path, req_log=None):
             (DB._link_barcode_checked)."""
             if not self._require_pin():
                 return
+            emp = getattr(self, "employee", None)
+            # admin accounts only: employees AND the legacy shared PIN (no account, no role) are refused,
+            # same rule as the desktop add-drug button
+            if not emp or emp.get("role") != "admin":
+                self._send_json(403, {"error": "إضافة الأصناف للمدير فقط"})
+                return
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except Exception:
@@ -1620,6 +1631,9 @@ def _make_handler(db_path, req_log=None):
                         return
                     db.return_sale(sid, self.employee["username"] if self.employee else "mobile",
                                    reason="إلغاء كامل من الموبايل")
+                except PermissionError as e:
+                    self._send_json(403, {"error": str(e)})
+                    return
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})
                     return
@@ -1731,6 +1745,9 @@ def _make_handler(db_path, req_log=None):
                         sid, self.employee["username"] if self.employee else "mobile", items, discount=discount,
                         payment_method=payment, customer_id=customer_id,
                         paid=paid)
+                except PermissionError as e:
+                    self._send_json(403, {"error": str(e)})
+                    return
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})
                     return

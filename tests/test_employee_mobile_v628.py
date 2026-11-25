@@ -138,7 +138,7 @@ class EmployeeMobile(unittest.TestCase):
     def test_own_edit_and_reference_collision_guard(self):
         sale=self.sale('alice','original')[1]
         body=dict(items=[dict(drug_id=self.did,unit='box',qty=2)],payment='cash')
-        self.assertEqual(self.request('POST','/api/invoices/%d/edit'%sale['sale_id'],body,self.tokens['alice'])[0],200)
+        self.assertEqual(self.request('POST','/api/invoices/%d/edit'%sale['sale_id'],body,self.tokens['alice'])[0],403)  # role policy: employees cannot edit invoices
         db=DB(self.path,init=False)
         self.assertEqual(db.get_sale(sale['sale_id'])['cashier'],'alice')
         ref=db.get_sale(sale['sale_id'])['client_ref']
@@ -149,7 +149,8 @@ class EmployeeMobile(unittest.TestCase):
     def test_reports_and_return(self):
         a=self.sale('alice','returned')[1]
         self.sale('alice','completed')
-        self.assertEqual(self.request('POST','/api/invoices/%d/return'%a['sale_id'],{},self.tokens['alice'])[0],200)
+        self.assertEqual(self.request('POST','/api/invoices/%d/return'%a['sale_id'],{},self.tokens['alice'])[0],403)  # employees cannot void
+        self.assertEqual(self.request('POST','/api/invoices/%d/return'%a['sale_id'],{},self.tokens['manager'])[0],200)
         db=DB(self.path,init=False)
         rows=db.report_employee_sales('2020-01-01','2030-01-01')
         self.assertEqual(len(rows),1)
@@ -159,6 +160,32 @@ class EmployeeMobile(unittest.TestCase):
         with self.assertRaises(ValueError):db.report_employee_sales('bad','2030-01-01')
         with self.assertRaises(ValueError):db.report_employee_sales('2030-01-01','2020-01-01')
         with self.assertRaises(ValueError):db.create_user('mobile','test-password','cashier')
+        db.close()
+
+    def test_employee_cannot_add_drug_from_phone(self):
+        body=dict(trade_en='PhoneAdd',sell_price=10,buy_price=5,strips_per_box=1,tablets_per_strip=1,barcode='9990001112223')
+        self.assertEqual(self.request('POST','/api/drugs',body,self.tokens['alice'])[0],403)
+        self.assertNotEqual(self.request('POST','/api/drugs',body,self.tokens['manager'])[0],403)
+        self.assertEqual(self.request('POST','/api/drugs',body,legacy=True)[0],403)  # legacy shared PIN has no role, so no add-drug
+
+    def test_customers_are_branch_scoped_on_phone(self):
+        db=DB(self.path,init=False)
+        a=db.add_branch('manager','A'); b=db.add_branch('manager','B')
+        db.set_user_branch('manager','alice',a); db.set_user_branch('manager','bob',b)
+        db.conn.execute('INSERT INTO batches (drug_id,batch_no,expiry,qty_units,buy_price_unit,created_at,branch_id) VALUES (?,?,?,?,?,?,?)',(self.did,'b2','2030-01-01',50,1,'2026-11-21',b))
+        db.set_scope(a); ca=db.add_customer('cust-A','1',0)
+        db.set_scope(b); cb=db.add_customer('cust-B','2',0)
+        db.conn.commit(); db.close()
+        names=lambda who: {c['name'] for c in self.request('GET','/api/customers',token=self.tokens[who])[1]['customers']}
+        self.assertIn('cust-A',names('alice')); self.assertNotIn('cust-B',names('alice'))
+        self.assertIn('cust-B',names('bob')); self.assertNotIn('cust-A',names('bob'))
+        r=self.sale('bob','x1',payment='credit',customer_id=ca)       # other branch's customer
+        self.assertNotEqual(r[0],200)
+        r=self.sale('bob','x2',payment='credit',customer_id=cb)
+        self.assertEqual(r[0],200)
+        db=DB(self.path,init=False)
+        bal=lambda i: db.conn.execute('SELECT balance FROM customers WHERE id=?',(i,)).fetchone()[0]
+        self.assertEqual(bal(ca),0); self.assertGreater(bal(cb),0)
         db.close()
 
 if __name__=='__main__':
