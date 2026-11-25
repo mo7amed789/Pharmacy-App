@@ -3965,11 +3965,14 @@ class App:
         tab = self._scrollable_tab("💰 الخزنة والورديات", tab)
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=8, pady=8)
-        self.lbl_shift = ttk.Label(top, text="", font=("Segoe UI", 12, "bold"))
-        self.lbl_shift.pack(side="left")
+        # the shift label (with the member list) gets its own row so the
+        # open / join / close / leave buttons are never pushed off screen
+        self.lbl_shift = ttk.Label(tab, text="", font=("Segoe UI", 12, "bold"), wraplength=900, justify="right")
+        self.lbl_shift.pack(fill="x", padx=8, pady=(8, 0), before=top)
         ttk.Button(top, text="فتح وردية جديدة", command=self.open_shift_dialog).pack(side="left", padx=8)
         ttk.Button(top, text="انضمام للوردية", command=self.join_shift_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="إغلاق الوردية الحالية", command=self.close_shift_dialog).pack(side="left", padx=4)
+        ttk.Button(top, text="مغادرة الوردية", command=self.leave_shift_dialog).pack(side="left", padx=4)
         ttk.Label(top, text="رصيد أول المدة:").pack(side="left", padx=(14, 2))
         self.e_float = ttk.Entry(top, width=10)
         self.e_float.pack(side="left")
@@ -4045,9 +4048,30 @@ class App:
         self.cash_refresh()
         messagebox.showinfo("تم", "انضممت للوردية #%d" % sid)
 
+    def leave_shift_dialog(self):
+        """Non-opener members leave the shared shift and record their own departure."""
+        if not self.current_shift:
+            messagebox.showinfo("تنبيه", "لا توجد وردية مفتوحة")
+            return
+        if not messagebox.askyesno("مغادرة الوردية",
+                                   "ستغادر الوردية وتسجل انصرافك. الوردية تظل مفتوحة لباقي الزملاء. متأكد؟"):
+            return
+        try:
+            sid = self.db.leave_shift(self.username)
+        except ValueError as e:
+            messagebox.showerror("خطأ", str(e))
+            return
+        self.db.audit(self.username, "leave_shift", "shift %s" % sid)
+        self.current_shift = None
+        self.cash_refresh()
+
     def close_shift_dialog(self):
         if not self.current_shift:
             messagebox.showinfo("تنبيه", "لا توجد وردية مفتوحة")
+            return
+        if not self.db.can_close_shift(self.current_shift["id"], self.username):
+            messagebox.showwarning("غير مسموح",
+                                   "إغلاق الوردية للمدير أو للموظف الذي فتحها فقط. يمكنك مغادرتها وتسجيل انصرافك.")
             return
         # v5.7: the drawer is reconciled from THIS shift's own sales
         # (opening + cash collected - expenses - cash refunds), not
@@ -4075,7 +4099,7 @@ class App:
         if counted is None:
             return
         try:
-            summ = self.db.close_shift(self.current_shift["id"], counted)
+            summ = self.db.close_shift(self.current_shift["id"], counted, actor=self.username)
         except ValueError as e:
             messagebox.showerror("خطأ", str(e))
             return
