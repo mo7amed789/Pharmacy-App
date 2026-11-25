@@ -50,11 +50,11 @@ def _review(app, parsed):
     cols = ("status", "name", "drug", "qty", "price", "exp", "batch")
     tv = ttk.Treeview(win, columns=cols, show="headings", height=14)
     for c, t, w in zip(cols, ("الحالة", "كما في الفاتورة", "الصنف في البرنامج", "علب", "سعر العلبة (يُؤكَّد)", "الصلاحية", "التشغيلة"),
-                       (340, 200, 200, 50, 80, 90, 80)):
+                       (320, 200, 200, 50, 80, 105, 80)):
         tv.heading(c, text=t)
         tv.column(c, width=w)
-    tv.tag_configure("bad", foreground="#b00020")
-    tv.tag_configure("ok", foreground="#1b5e20")
+    tv.tag_configure("bad", foreground="#ffe3de", background="#7a1f1f")
+    tv.tag_configure("ok", foreground="#e3ffe8", background="#1f5a2a")
     lines = parsed["lines"]
 
     def status(ln):
