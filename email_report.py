@@ -78,7 +78,7 @@ def load_secret(db):
 def load_email_cfg(path=None):
     try:
         with open(path or RM.config_path(), encoding="utf-8") as f:
-            d = (json.load(f) or {}).get("email") or {}
+            d = (json.load(f) or {}).get("mail_report") or {}
     except (OSError, ValueError):
         return None
     need = ("host", "port", "username", "sender", "to")
