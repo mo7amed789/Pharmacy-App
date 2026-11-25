@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ar" dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Owner monitor</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee}
+header,section{padding:10px 14px}input,select,button{font-size:15px;padding:6px;margin:2px;background:#222;color:#eee;border:1px solid #555;border-radius:4px}
+.row{padding:6px 10px;border-bottom:1px solid #2a2a2a;cursor:pointer;overflow-wrap:anywhere}.row:hover{background:#1c2430}
+.err{color:#ff8a80}.activity{color:#cfe8ff}.system{color:#ffd180}.heartbeat{color:#8f8}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#1a1a1a;padding:10px;margin:0}#msg{color:#ff8a80}
+</style></head><body>
+<header id="login">
+<input id="url" placeholder="https://xxxx.supabase.co" size="32"> <input id="key" placeholder="publishable key" size="28">
+<input id="em" placeholder="owner email"> <input id="pw" type="password" placeholder="owner password">
+<button onclick="go()">Sign in</button> <span id="msg"></span>
+</header>
+<section id="app" hidden>
+<select id="kind" onchange="load()"><option value="">all</option><option>activity</option><option>system</option><option>heartbeat</option></select>
+<input id="q" placeholder="filter text" oninput="render()"> <button onclick="load()">Refresh</button> <span id="info"></span>
+<div id="list"></div><pre id="detail">Click a row to see the full record.</pre>
+</section>
+<script>
+let T=null,ROWS=[],U='',K='';
+const $=i=>document.getElementById(i);
+function sv(){try{localStorage.setItem('om',JSON.stringify({url:$('url').value,key:$('key').value,em:$('em').value}))}catch(e){}}
+try{const o=JSON.parse(localStorage.getItem('om')||'{}');$('url').value=o.url||'';$('key').value=o.key||'';$('em').value=o.em||''}catch(e){}
+async function go(){U=$('url').value.trim().replace(/\/$/,'');K=$('key').value.trim();$('msg').textContent='';
+ try{const r=await fetch(U+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:K,'Content-Type':'application/json'},body:JSON.stringify({email:$('em').value,password:$('pw').value})});
+ const d=await r.json();if(!d.access_token)throw new Error('sign-in failed');T=d.access_token;sv();$('pw').value='';$('app').hidden=false;load();setInterval(load,30000)}
+ catch(e){$('msg').textContent=e.message}}
+async function load(){if(!T)return;const k=$('kind').value;
+ const r=await fetch(U+'/rest/v1/monitor_events?select=*&order=received_at.desc&limit=300'+(k?'&kind=eq.'+k:''),{headers:{apikey:K,Authorization:'Bearer '+T}});
+ if(!r.ok){$('info').textContent='error '+r.status;return}ROWS=await r.json();render()}
+function line(x){const p=x.payload||{};if(x.kind==='activity')return[p.time,p.user+(p.role?' ('+p.role+')':''),p.source,p.action,p.entity?p.entity+' '+p.entity_id:'',p.branch].filter(Boolean).join(' | ');
+ if(x.kind==='system')return[p.time,p.level,p.component+'/'+p.event,p.message].filter(Boolean).join(' | ');
+ return[p.time,'heartbeat v'+p.app_version,'log max '+p.audit_max_id,'unsent '+p.unsent_activity].join(' | ')}
+function render(){const q=$('q').value.toLowerCase();const L=$('list');L.textContent='';
+ const rows=ROWS.filter(x=>!q||JSON.stringify(x.payload).toLowerCase().includes(q));
+ $('info').textContent=rows.length+' rows, '+x_age();
+ rows.forEach(x=>{const d=document.createElement('div');d.className='row '+x.kind+((x.payload||{}).level==='error'?' err':'');d.textContent=line(x);
+  d.onclick=()=>{$('detail').textContent=JSON.stringify(x,null,2)};L.appendChild(d)})}
+function x_age(){const h=ROWS.find(x=>x.kind==='heartbeat');if(!h)return'no heartbeat yet';const m=Math.round((Date.now()-new Date(h.received_at))/60000);return'last heartbeat '+m+' min ago'}
+</script></body></html>
