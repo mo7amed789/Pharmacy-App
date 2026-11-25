@@ -52,3 +52,6 @@ tests/srv619/
 
 reference_catalog.sqlite3
 catalog/*.jsonl.gz
+
+# remote monitoring credentials (device login)
+remote_monitor.json
