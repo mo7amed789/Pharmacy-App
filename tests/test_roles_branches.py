@@ -154,6 +154,36 @@ class RolesBranches(unittest.TestCase):
         self.db.set_scope(b)
         self.assertEqual(self.db.sellable_stock(d["id"]), 10)
 
+    def test_customers_and_balances_are_per_branch(self):
+        d = self._drug()
+        self.db.conn.execute("INSERT INTO customers (name, phone, credit_limit, balance, created_at) VALUES ('legacy','1',0,50,'x')")
+        self.db.conn.execute("INSERT INTO customers (name, phone, credit_limit, created_at) VALUES ('عميل نقدي','',0,'x')")
+        self.db.conn.commit()
+        a = self.db.add_branch("boss", "A")
+        b = self.db.add_branch("boss", "B")
+        self._stock(d["id"], 20, a)
+        self._stock(d["id"], 20, b)
+        names = lambda: {c["name"] for c in self.db.customers()}
+        self.db.set_scope(a)
+        self.assertIn("legacy", names())             # legacy customer adopted by first branch
+        ca = self.db.add_customer("only-a", "2", 500)
+        self.db.set_scope(b)
+        self.assertNotIn("legacy", names())
+        self.assertNotIn("only-a", names())
+        self.assertIn("عميل نقدي", names())          # shared walk-in
+        cb = self.db.add_customer("only-b", "3", 500)
+        with self.assertRaises(ValueError):          # B cannot sell on credit to A's customer
+            self.db.create_sale("boss", self._items(d, 1), customer_id=ca, payment_method="credit", paid=0)
+        with self.assertRaises(ValueError):
+            self.db.customer_pay(ca, 1, user="boss")
+        self.db.create_sale("boss", self._items(d, 1), customer_id=cb, payment_method="credit", paid=0)
+        self.db.set_scope(a)
+        self.assertNotIn("only-b", names())
+        self.db.set_scope(None)                      # admin all sees both
+        self.assertTrue({"only-a", "only-b", "legacy"} <= names())
+        with self.assertRaises(ValueError):          # all-mode with 2 branches must pick one
+            self.db.add_customer("x")
+
     def test_employee_sees_only_own_sales(self):
         d = self._drug()
         a = self.db.add_branch("boss", "A")
