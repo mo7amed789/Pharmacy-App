@@ -30,7 +30,7 @@ class Fake:
                 if self.headers.get("Authorization") != "Bearer devtoken":
                     return self._send(401, {})
                 for e in body:
-                    if not any((r["device_id"], r["kind"], r["src_id"]) == (e["device_id"], e["kind"], e["src_id"]) for r in outer.rows):
+                    if not any((r["device_id"], r.get("generation"), r["kind"], r["src_id"]) == (e["device_id"], e.get("generation"), e["kind"], e["src_id"]) for r in outer.rows):
                         outer.rows.append(e)
                 self._send(201, None)
 
@@ -112,7 +112,7 @@ class RemoteMonitor(unittest.TestCase):
         self.assertEqual(len([r for r in self.fake.rows if r["kind"] == "activity"]), 0)
         logs = self.db.system_log_query(component="cloud_sync")
         self.assertEqual(len([r for r in logs if r["event"] == "remote_monitor_failed"]), 1)
-        self.assertTrue(self.db.get_setting(RM.K_LAST_ERR))
+        self.assertTrue(RM.load_state(self.db).get("last_err"))
         self.fake.fail = False
         self.assertGreaterEqual(RM.sync_once(self.db), 1)
         self.assertEqual(len([r for r in self.fake.rows if r["kind"] == "activity" and r["payload"]["action"] == "sale"]), 1)
@@ -148,6 +148,91 @@ class RemoteMonitor(unittest.TestCase):
         acts = [r[0] for r in self.db.conn.execute("SELECT action FROM audit_log")]
         self.assertIn("remote_monitor_on", acts); self.assertIn("remote_monitor_off", acts)
         self.assertFalse(RM.is_enabled(self.db))
+
+    # ---- restore / reset handling ----
+    def _acts(self):
+        return [r["payload"]["action"] for r in self.fake.rows if r["kind"] == "activity"]
+
+    def test_restore_of_older_db_uploads_new_events_under_new_generation(self):
+        RM.enable(self.db)
+        for i in range(5):
+            self.db.audit("boss", "sale_%d" % i, "x")
+        RM.sync_once(self.db)
+        g1 = RM.load_state(self.db)["generation"]
+        # simulate restore: wipe log rows so ids restart lower than the cursor
+        self.db.conn.execute("DROP TRIGGER IF EXISTS trg_audit_log_no_delete")
+        self.db.conn.execute("DELETE FROM audit_log"); self.db.conn.execute("DELETE FROM sqlite_sequence WHERE name='audit_log'")
+        self.db.conn.commit()
+        import time; time.sleep(1.2)
+        self.db.audit("boss", "after_restore", "x")
+        RM.sync_once(self.db)
+        st = RM.load_state(self.db)
+        self.assertNotEqual(st["generation"], g1)
+        self.assertIn("after_restore", self._acts())
+        self.assertEqual(st["enabled"], 1)  # restore does not turn monitoring off
+        self.assertTrue([r for r in self.db.system_log_query(component="remote_monitor") if r["event"] == "generation_change"])
+
+    def test_reused_ids_with_same_max_id_detected_by_fingerprint(self):
+        RM.enable(self.db)
+        self.db.audit("boss", "orig", "x")
+        RM.sync_once(self.db)
+        g1 = RM.load_state(self.db)["generation"]
+        self.db.conn.execute("DROP TRIGGER IF EXISTS trg_audit_log_no_update")
+        self.db.conn.execute("UPDATE audit_log SET action='other_history', user='someone' WHERE action='orig'")
+        self.db.conn.commit()
+        RM.sync_once(self.db)
+        self.assertNotEqual(RM.load_state(self.db)["generation"], g1)
+
+    def test_normal_use_keeps_one_generation(self):
+        RM.enable(self.db)
+        g1 = RM.load_state(self.db)["generation"]
+        for i in range(3):
+            self.db.audit("boss", "a%d" % i, "x"); RM.sync_once(self.db)
+        self.assertEqual(RM.load_state(self.db)["generation"], g1)
+        self.assertEqual(len(self.fake.rows and [r for r in self.fake.rows if r["kind"] == "activity" and r["payload"]["action"].startswith("a")]), 3)
+
+    def test_lost_sidecar_means_off_and_sends_nothing(self):
+        RM.enable(self.db)
+        os.remove(RM._state_path(self.db))
+        self.db.audit("boss", "x", "y")
+        self.assertIsNone(RM.sync_once(self.db))
+        self.assertFalse(RM.is_enabled(self.db))
+
+    def test_events_carry_generation_and_no_client_owner_field(self):
+        RM.enable(self.db)
+        self.db.audit("boss", "sale", "x")
+        RM.sync_once(self.db)
+        for r in self.fake.rows:
+            self.assertTrue(r["generation"])
+            self.assertNotIn("device_uid", r)
+            self.assertNotIn("user_id", r)
+
+    def test_no_recursive_log_growth(self):
+        RM.enable(self.db)
+        self.db.audit("boss", "sale", "x")
+        self.fake.fail = True
+        for _ in range(20):
+            RM.sync_once(self.db)
+        n_fail = len([r for r in self.db.system_log_query(component="cloud_sync") if r["event"] == "remote_monitor_failed"])
+        self.assertEqual(n_fail, 1)
+        self.fake.fail = False
+        RM.sync_once(self.db)
+        c1 = self.db.conn.execute("SELECT COUNT(*) FROM system_log").fetchone()[0]
+        for _ in range(5):
+            RM.sync_once(self.db)
+        c2 = self.db.conn.execute("SELECT COUNT(*) FROM system_log").fetchone()[0]
+        self.assertEqual(c1, c2)
+
+    def test_secrets_not_in_database_or_payloads(self):
+        RM.enable(self.db)
+        self.db.audit("boss", "sale", "x")
+        RM.sync_once(self.db)
+        dump = "\n".join(str(tuple(r)) for t in ("audit_log", "system_log", "settings")
+                         for r in self.db.conn.execute("SELECT * FROM %s" % t))
+        for secret in ("DevPassw0rd", "anon_key", "pk\x27"):
+            self.assertNotIn(secret, dump)
+        self.assertNotIn("DevPassw0rd", json.dumps(self.fake.rows))
+        self.assertNotIn("DevPassw0rd", open(RM._state_path(self.db)).read())
 
 
 if __name__ == "__main__":
