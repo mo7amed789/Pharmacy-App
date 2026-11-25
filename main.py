@@ -2416,6 +2416,7 @@ class App:
         ttk.Button(top, text="➕ مورد جديد", command=self.add_supplier_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="💰 دفع للمورد المحدد", command=self.pay_supplier_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="↩️ مرتجع مشتريات", command=self.purchase_return_dialog).pack(side="left", padx=4)
+        ttk.Button(top, text="📷 من صورة فاتورة", command=self.invoice_photo_intake).pack(side="left", padx=4)
         ttk.Label(top, text="رقم فاتورة المورد:").pack(side="left", padx=(12, 2))
         self.e_pur_inv = ttk.Entry(top, width=14)
         self.e_pur_inv.pack(side="left")
@@ -2489,6 +2490,11 @@ class App:
         self.lbl_pur_total = ttk.Label(mid, text="إجمالي فاتورة الشراء: 0.00 ج.م", style="Total.TLabel")
         self.lbl_pur_total.pack()
         self.pur_search_refresh()
+
+    def invoice_photo_intake(self):
+        """Photo of a supplier invoice -> local OCR -> reviewed purchase DRAFT (never auto-saved)."""
+        import invoice_intake_ui
+        invoice_intake_ui.open_invoice_intake(self)
 
     def pur_search_refresh(self):
         if not hasattr(self, "list_pur"):
