@@ -138,7 +138,7 @@ class EmployeeMobile(unittest.TestCase):
     def test_own_edit_and_reference_collision_guard(self):
         sale=self.sale('alice','original')[1]
         body=dict(items=[dict(drug_id=self.did,unit='box',qty=2)],payment='cash')
-        self.assertEqual(self.request('POST','/api/invoices/%d/edit'%sale['sale_id'],body,self.tokens['alice'])[0],200)
+        self.assertEqual(self.request('POST','/api/invoices/%d/edit'%sale['sale_id'],body,self.tokens['alice'])[0],403)  # role policy: employees cannot edit invoices
         db=DB(self.path,init=False)
         self.assertEqual(db.get_sale(sale['sale_id'])['cashier'],'alice')
         ref=db.get_sale(sale['sale_id'])['client_ref']
@@ -149,7 +149,8 @@ class EmployeeMobile(unittest.TestCase):
     def test_reports_and_return(self):
         a=self.sale('alice','returned')[1]
         self.sale('alice','completed')
-        self.assertEqual(self.request('POST','/api/invoices/%d/return'%a['sale_id'],{},self.tokens['alice'])[0],200)
+        self.assertEqual(self.request('POST','/api/invoices/%d/return'%a['sale_id'],{},self.tokens['alice'])[0],403)  # employees cannot void
+        self.assertEqual(self.request('POST','/api/invoices/%d/return'%a['sale_id'],{},self.tokens['manager'])[0],200)
         db=DB(self.path,init=False)
         rows=db.report_employee_sales('2020-01-01','2030-01-01')
         self.assertEqual(len(rows),1)
