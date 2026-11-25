@@ -13,6 +13,9 @@ import base64
 import json
 import os
 import smtplib
+import urllib.error
+import urllib.parse
+import urllib.request
 import ssl
 import time
 from datetime import datetime
@@ -21,7 +24,7 @@ from email.message import EmailMessage
 import remote_monitor as RM
 
 REPORT_GAP = 6 * 3600   # one combined activity + error report every 6 hours
-MODES = ("ssl", "starttls")
+MODES = ("ssl", "starttls", "api")
 
 
 class EmailError(Exception):
@@ -81,6 +84,12 @@ def load_email_cfg(path=None):
             d = (json.load(f) or {}).get("mail_report") or {}
     except (OSError, ValueError):
         return None
+    if d.get("mode") == "api":
+        u = str(d.get("url") or "")
+        if not (u.startswith("https://") and d.get("sender") and d.get("to")):
+            return None      # HTTPS only; a plain http URL is refused
+        return {"mode": "api", "url": u, "host": urllib.parse.urlparse(u).hostname or "", "port": 443,
+                "username": "", "sender": d["sender"], "to": d["to"]}
     need = ("host", "port", "username", "sender", "to")
     if not all(d.get(k) for k in need) or d.get("mode", "ssl") not in MODES:
         return None
@@ -89,12 +98,28 @@ def load_email_cfg(path=None):
 
 
 def destination(cfg):
+    if cfg and cfg["mode"] == "api":
+        return "email to %s via HTTPS API %s (certificate checked)" % (cfg["to"], cfg["host"])
     return "email to %s via %s:%s (%s, certificate checked)" % (cfg["to"], cfg["host"], cfg["port"], cfg["mode"]) if cfg else ""
 
 
 # ---------- sending ----------
 def send_mail(cfg, password, subject, body, context=None):
     context = context or ssl.create_default_context()
+    if cfg["mode"] == "api":     # Resend-style JSON API: POST {from,to,subject,text} with Bearer key
+        req = urllib.request.Request(cfg["url"], data=json.dumps({"from": cfg["sender"], "to": [cfg["to"]], "subject": subject,
+                                     "text": body}).encode("utf-8"), method="POST",
+                                     headers={"Authorization": "Bearer " + password, "Content-Type": "application/json",
+                                              "User-Agent": "pharmacy-app-report/1"})
+        try:
+            with urllib.request.urlopen(req, timeout=30, context=context) as r:
+                if not 200 <= r.status < 300:
+                    raise EmailError("HTTP %s" % r.status)
+        except urllib.error.HTTPError as e:
+            raise EmailError("HTTP %s" % e.code)
+        except (urllib.error.URLError, ssl.SSLError, OSError) as e:
+            raise EmailError("%s" % type(e).__name__)
+        return
     msg = EmailMessage()
     msg["Subject"], msg["From"], msg["To"] = subject, cfg["sender"], cfg["to"]
     msg.set_content(body)
