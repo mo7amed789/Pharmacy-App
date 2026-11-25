@@ -55,7 +55,6 @@ def _review(app, parsed):
         tv.column(c, width=w)
     tv.tag_configure("bad", foreground="#b00020")
     tv.tag_configure("ok", foreground="#1b5e20")
-    tv.pack(fill="both", expand=True, padx=8)
     lines = parsed["lines"]
 
     def status(ln):
@@ -193,11 +192,11 @@ def _review(app, parsed):
         messagebox.showinfo("تم", "أُضيف %d سطر كمسودة. راجع المورد والمدفوع ثم اضغط «حفظ فاتورة الشراء»." % len(ready),
                             parent=app.root)
 
-    ttk.Checkbutton(win, variable=basis, text="أؤكد: السعر = سعر شراء العلبة الواحدة (وليس القطعة/الشريط ولا الإجمالي)، "
+    tk.Checkbutton(win, variable=basis, justify="right", anchor="w", text="أؤكد: السعر = سعر شراء العلبة الواحدة (وليس القطعة/الشريط ولا الإجمالي)، "
                     "بعد الخصم وبنفس طريقة الضريبة التي أسجل بها التكلفة. سيتحدث سعر تكلفة الصنف بهذا الرقم.",
-                    wraplength=1000).pack(anchor="w", padx=10, pady=(6, 0))
+                    wraplength=1000).pack(side="bottom", anchor="w", padx=10, pady=(6, 0))
     bar = ttk.Frame(win)
-    bar.pack(fill="x", padx=8, pady=8)
+    bar.pack(side="bottom", fill="x", padx=8, pady=8)
     ttk.Button(bar, text="تأكيد الصنف المقترح", command=confirm_suggestion).pack(side="left", padx=3)
     ttk.Button(bar, text="آخر يوم في الشهر", command=month_end).pack(side="left", padx=3)
     ttk.Button(bar, text="اختيار الصنف", command=pick_drug).pack(side="left", padx=3)
@@ -205,4 +204,5 @@ def _review(app, parsed):
     ttk.Button(bar, text="حذف السطر", command=drop).pack(side="left", padx=3)
     ttk.Button(bar, text="➕ إضافة الجاهز كمسودة شراء", command=add_ready).pack(side="right", padx=3)
     ttk.Button(bar, text="إلغاء", command=win.destroy).pack(side="right", padx=3)
+    tv.pack(fill="both", expand=True, padx=8)
     refresh()
