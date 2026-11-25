@@ -90,6 +90,7 @@ def tick(db_path):
             except Exception as e:
                 db.set_setting(K_BACKUP_ERROR, str(e))
                 db.audit("", "auto_backup_failed", str(e)[:300])
+                db.syslog("error", "automation", "auto_backup_failed", str(e)[:300])
         if (db.get_setting(K_SYNC_ENABLED, "1") != "0"
                 and supabase_client.is_configured() and sync_due(db)):
             try:
@@ -98,6 +99,8 @@ def tick(db_path):
             except Exception as e:
                 db.set_setting(K_SYNC_ERROR, str(e))
                 db.audit("", "auto_sync_failed", str(e)[:300])
+                import cloud_sync
+                cloud_sync.log_sync_error(db, "auto_sync_failed", str(e)[:300])
     finally:
         db.close()
     return done
