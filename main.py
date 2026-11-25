@@ -488,6 +488,10 @@ class App:
         self.username = user["username"]
         self.role = user["role"]
         self.is_admin = self.role == "admin"
+        # branch scope: employees only see their branch and their own sales;
+        # the admin sees every branch (switchable from the top bar)
+        _b, _u = db.scope_for_user(self.username)
+        db.set_scope(_b, _u)
         self.theme_name = ui_theme.get_theme_name(db)
         # v5.9 customization (safe defaults; missing keys fall back)
         self.ui_accent = db.get_setting("ui_accent", "teal") or "teal"
@@ -524,21 +528,25 @@ class App:
                                       bg=self.pal["header_bg"], fg="#FEF3C7",
                                       font=("Segoe UI", 11))
         self.lbl_top_shift.pack(side="left", padx=6)
-        tk.Button(self.topbar, text="❓ اختصارات (F1)", bg=self.pal["header_bg2"],
-                  fg="#FFFFFF", font=("Segoe UI", 10, "bold"), relief="flat",
-                  command=self.show_shortcuts).pack(side="right", padx=6, pady=8)
+        # Right-side buttons are packed in priority order: the first one packed
+        # is the last to be clipped on a narrow window, so account actions come
+        # first and the shortcuts button last.
+        if not self.is_admin:
+            tk.Button(self.topbar, text="🔑 كلمتي", bg=self.pal["header_bg2"], fg="#FFFFFF",
+                      font=("Segoe UI", 10, "bold"), relief="flat",
+                      command=self.change_password_dialog).pack(side="right", padx=4, pady=8)
+        tk.Button(self.topbar, text="🕒 الحضور", bg=self.pal["header_bg2"], fg="#FFFFFF",
+                  font=("Segoe UI", 10, "bold"), relief="flat",
+                  command=self.attendance_dialog).pack(side="right", padx=4, pady=8)
+        self._build_branch_selector()
         self.btn_theme = tk.Button(self.topbar, text="🌙 داكن" if self.theme_name == "light" else "☀️ فاتح",
                                    bg=self.pal["header_bg2"], fg="#FFFFFF",
                                    font=("Segoe UI", 10, "bold"), relief="flat",
                                    command=self.toggle_theme)
-        self.btn_theme.pack(side="right", padx=6, pady=8)
-        tk.Button(self.topbar, text="🕒 الحضور", bg=self.pal["header_bg2"], fg="#FFFFFF",
-                  font=("Segoe UI", 10, "bold"), relief="flat",
-                  command=self.attendance_dialog).pack(side="right", padx=6, pady=8)
-        if not self.is_admin:
-            tk.Button(self.topbar, text="🔑 كلمتي", bg=self.pal["header_bg2"], fg="#FFFFFF",
-                      font=("Segoe UI", 10, "bold"), relief="flat",
-                      command=self.change_password_dialog).pack(side="right", padx=6, pady=8)
+        self.btn_theme.pack(side="right", padx=4, pady=8)
+        tk.Button(self.topbar, text="❓ (F1)", bg=self.pal["header_bg2"],
+                  fg="#FFFFFF", font=("Segoe UI", 10, "bold"), relief="flat",
+                  command=self.show_shortcuts).pack(side="right", padx=4, pady=8)
         # ----- status banner (coloured success/error/info) -----
         self.banner = ui_theme.make_banner(root, "جاهز — اختر تبويباً أو ابدأ البيع من الكاشير.", "info", self.theme_name)
         self.banner.pack(fill="x")
@@ -3282,9 +3290,10 @@ class App:
                    style="Accent.TButton").pack(padx=10, pady=(0, 2))
         # v6.19: direct delete (full void) from the invoices list — same
         # atomic return path as the reports-tab dialog and the phone.
-        ttk.Button(win, text="🗑️ حذف الفاتورة المحددة (إرجاع كامل)",
-                   command=self._inv_void_selected,
-                   style="Danger.TButton").pack(padx=10, pady=(0, 6))
+        if self.is_admin:  # employees cannot void invoices
+            ttk.Button(win, text="🗑️ حذف الفاتورة المحددة (إرجاع كامل)",
+                       command=self._inv_void_selected,
+                       style="Danger.TButton").pack(padx=10, pady=(0, 6))
         win.protocol("WM_DELETE_WINDOW", self._inv_close)
         self._inv_refresh()
 
@@ -3396,9 +3405,10 @@ class App:
                     anchor="w", padx=12, pady=2)
         btns = ttk.Frame(win)
         btns.pack(fill="x", padx=10, pady=8)
-        ttk.Button(btns, text="✏️ تعديل الفاتورة",
-                   command=lambda: self.edit_invoice_dialog(s["id"]),
-                   style="Accent.TButton").pack(side="left", padx=4)
+        if self.is_admin:  # employees cannot edit invoices
+            ttk.Button(btns, text="✏️ تعديل الفاتورة",
+                       command=lambda: self.edit_invoice_dialog(s["id"]),
+                       style="Accent.TButton").pack(side="left", padx=4)
         ttk.Button(btns, text="🖨️ طباعة الإيصال",
                    command=lambda: self._open_receipt_window(s),
                    style="Success.TButton").pack(side="left", padx=4)
@@ -3411,9 +3421,10 @@ class App:
                          it.get("line_total")) for it in items])).pack(side="left", padx=4)
         # v6.19: direct delete (full void) from the detail window too —
         # the window closes only when the void actually happened.
-        ttk.Button(btns, text="🗑️ حذف الفاتورة",
-                   command=lambda: self._void_sale_row(s, parent=win) and win.destroy(),
-                   style="Danger.TButton").pack(side="left", padx=4)
+        if self.is_admin:
+            ttk.Button(btns, text="🗑️ حذف الفاتورة",
+                       command=lambda: self._void_sale_row(s, parent=win) and win.destroy(),
+                       style="Danger.TButton").pack(side="left", padx=4)
 
     # ---------- v5.5: تعديل الفاتورة (قبل الطباعة أو بعدها) ----------
     def _inv_edit_selected(self):
@@ -3437,7 +3448,48 @@ class App:
             return
         self.edit_invoice_dialog(sale["id"])
 
+    def _build_branch_selector(self):
+        """Admin: pick one branch or all branches. Employee: fixed branch label."""
+        branches = self.db.list_branches(active_only=True)
+        self._branch_by_label = {}
+        if not branches:
+            return
+        if self.is_admin:
+            labels = ["كل الفروع"] + [b["name"] for b in branches]
+            for b in branches:
+                self._branch_by_label[b["name"]] = b["id"]
+            self.branch_var = tk.StringVar(value=labels[0])
+            cb = ttk.Combobox(self.topbar, textvariable=self.branch_var, values=labels,
+                              state="readonly", width=14)
+            cb.pack(side="right", padx=4, pady=12)
+            cb.bind("<<ComboboxSelected>>", self._on_branch_selected)
+        else:
+            name = next((b["name"] for b in branches if b["id"] == self.db.scope_branch), "بدون فرع")
+            tk.Label(self.topbar, text="🏬 " + name, bg=self.pal["header_bg"], fg="#CCFBF1",
+                     font=("Segoe UI", 10, "bold")).pack(side="right", padx=6)
+
+    def _on_branch_selected(self, _e=None):
+        bid = self._branch_by_label.get(self.branch_var.get())
+        self.db.set_scope(bid, None)
+        for fn in ("refresh_dashboard", "cash_refresh", "inv_refresh", "refresh_pos_totals"):
+            try:
+                getattr(self, fn)()
+            except Exception:
+                pass
+        try:
+            self.show_banner("العرض الآن: " + self.branch_var.get(), "info")
+        except Exception:
+            pass
+
+    def _admin_only_invoice(self):
+        if not self.is_admin:
+            messagebox.showwarning("غير مسموح", "إلغاء أو تعديل الفاتورة للمدير فقط")
+            return False
+        return True
+
     def edit_invoice_dialog(self, sale_id):
+        if not self._admin_only_invoice():
+            return
         """Edit one invoice (PC + phone invoices alike): change qty,
         remove lines, add a new item, change discount / paid /
         payment / customer. Save goes through DB.edit_sale() — one
@@ -3816,7 +3868,7 @@ class App:
         Used by the reports-tab dialog, the invoices list window and
         the invoice detail window.  Returns True when the invoice was
         actually voided."""
-        if not s:
+        if not s or not self._admin_only_invoice():
             return False
         if s.get("status") != "completed":
             messagebox.showinfo("لا يمكن الحذف",
@@ -3916,6 +3968,7 @@ class App:
         self.lbl_shift = ttk.Label(top, text="", font=("Segoe UI", 12, "bold"))
         self.lbl_shift.pack(side="left")
         ttk.Button(top, text="فتح وردية جديدة", command=self.open_shift_dialog).pack(side="left", padx=8)
+        ttk.Button(top, text="انضمام للوردية", command=self.join_shift_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="إغلاق الوردية الحالية", command=self.close_shift_dialog).pack(side="left", padx=4)
         ttk.Label(top, text="رصيد أول المدة:").pack(side="left", padx=(14, 2))
         self.e_float = ttk.Entry(top, width=10)
@@ -3952,9 +4005,10 @@ class App:
         if not hasattr(self, "lbl_shift"):
             return  # v6.14
         if self.current_shift:
-            self.lbl_shift.config(text="الوردية الحالية: #%d — فتحت %s — رصيد أول المدة %s" % (
+            members = "، ".join(m["username"] for m in self.db.shift_members(self.current_shift["id"]))
+            self.lbl_shift.config(text="الوردية الحالية: #%d — فتحت %s — رصيد أول المدة %s — الموظفون: %s" % (
                 self.current_shift["id"], self.current_shift["opened_at"],
-                money(self.current_shift["opening_float"])))
+                money(self.current_shift["opening_float"]), members))
         else:
             self.lbl_shift.config(text="لا توجد وردية مفتوحة — افتح وردية قبل البيع")
         for i in self.tree_exp.get_children():
@@ -3977,6 +4031,19 @@ class App:
         self.db.audit(self.username, "open_shift", "shift %s" % sid)
         self.cash_refresh()
         messagebox.showinfo("تم", "تم فتح الوردية #%d" % sid)
+
+    def join_shift_dialog(self):
+        """Several employees can work one shift (shared drawer). Joining
+        does not touch attendance, which stays per person."""
+        try:
+            sid = self.db.join_shift(self.username)
+        except ValueError as e:
+            messagebox.showerror("خطأ", str(e))
+            return
+        self.current_shift = self.db.open_shift_for(self.username)
+        self.db.audit(self.username, "join_shift", "shift %s" % sid)
+        self.cash_refresh()
+        messagebox.showinfo("تم", "انضممت للوردية #%d" % sid)
 
     def close_shift_dialog(self):
         if not self.current_shift:
@@ -4609,9 +4676,10 @@ class App:
         ttk.Button(row, text="🖨️ طباعة",
                    command=self.mobile_print_selected,
                    style="Success.TButton").pack(side="left", padx=4)
-        ttk.Button(row, text="✏️ تعديل",
-                   command=self.mobile_edit_selected,
-                   style="Accent.TButton").pack(side="left", padx=4)
+        if self.is_admin:
+            ttk.Button(row, text="✏️ تعديل",
+                       command=self.mobile_edit_selected,
+                       style="Accent.TButton").pack(side="left", padx=4)
         ttk.Button(row, text="📋 كل الفواتير",
                    command=self.mobile_show_all).pack(side="left", padx=4)
         self.mobile_rows = []
