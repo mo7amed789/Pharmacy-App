@@ -41,6 +41,25 @@ def _set(db, key, value):
         pass
 
 
+def log_sync_error(db, event, message, level="error", dedupe_minutes=30):
+    """Every failed sync is written to the system log (the settings label only
+    keeps the latest error and clears it on the next success). The same
+    event+message is logged at most once per `dedupe_minutes`, so a dead
+    connection does not fill the log every 15 seconds. Never raises."""
+    try:
+        from datetime import datetime, timedelta
+        from database import redact_text
+        msg = redact_text(str(message)[:300], 500)
+        since = (datetime.now() - timedelta(minutes=dedupe_minutes)).isoformat(timespec="seconds")
+        dup = db.conn.execute(
+            "SELECT 1 FROM system_log WHERE component='cloud_sync' AND event=? AND message=? "
+            "AND created_at>=? LIMIT 1", (event, msg[:500], since)).fetchone()
+        if dup is None:
+            db.syslog(level, "cloud_sync", event, msg)
+    except Exception:
+        pass
+
+
 def status(db):
     """حالة المزامنة كما تعرضها شاشة الإعدادات."""
     if not supabase_client.is_configured():
@@ -127,6 +146,7 @@ def push_drug_safe(db, drug_id):
         return push_drug(db, drug_id)
     except Exception as e:
         _set(db, K_LAST_ERROR, str(e))
+        log_sync_error(db, "push_failed", "drug %s: %s" % (drug_id, e))
         return False
 
 
@@ -166,6 +186,9 @@ def push_all(db, batch=500, progress=None):
             failed += len(pending)
     _set(db, K_LAST_PUSH, _now_str())
     db.audit("", "cloud_push", "pushed %d failed %d" % (sent, failed))
+    if failed:
+        _set(db, K_LAST_ERROR, "فشل رفع %d صنف" % failed)
+        log_sync_error(db, "push_all_partial", "pushed %d, failed %d" % (sent, failed))
     return sent, failed
 
 
@@ -347,7 +370,10 @@ def apply_mobile_orders(db, client=None, limit=10):
             else:
                 client.update_order(order["id"], "failed", {"error": err})
                 failed += 1
-        except (SupabaseError, KeyError, TypeError):
+                log_sync_error(db, "cloud_order_failed", "order %s: %s" % (order.get("id"), err),
+                               dedupe_minutes=0)
+        except (SupabaseError, KeyError, TypeError) as e:
+            log_sync_error(db, "cloud_order_update_failed", "order %s: %s" % (order.get("id"), e))
             break  # تعذر تحديث السحابة — يُعاد الطلب في الدورة القادمة
     return done, failed
 
@@ -382,6 +408,7 @@ def start_order_polling(db_path, interval=15):
                     import database as database_module
                     db = database_module.DB(path=db_path, init=False)
                     _set(db, K_LAST_ORDERS_ERROR, str(e)[:200])
+                    log_sync_error(db, "orders_poll_failed", str(e)[:200])
                     db.close()
                 except Exception:
                     pass

@@ -867,6 +867,7 @@ def _make_handler(db_path, req_log=None):
             DB.ensure_initialized(db_path)
             d = DB(path=db_path, init=False)
             emp = getattr(self, "employee", None)
+            d.set_actor(emp["username"] if emp else "mobile", "mobile")
             if emp:  # employee/admin accounts work inside their own branch
                 b, _u = d.scope_for_user(emp["username"], own_only=False)
                 d.set_scope(b)
@@ -980,9 +981,11 @@ def _make_handler(db_path, req_log=None):
                 return
             if not user:
                 self._pin_failed()
+                self._track_login(username, False)
                 self._send_json(401, {"error": "اسم المستخدم أو كلمة المرور غير صحيحة"})
                 return
             self._pin_succeeded()
+            self._track_login(user["username"], True)
             token = secrets.token_urlsafe(32)
             digest = hashlib.sha256(token.encode()).hexdigest()
             with Handler._SESSIONS_LOCK:
@@ -990,6 +993,36 @@ def _make_handler(db_path, req_log=None):
                 Handler._SESSIONS = {k:v for k,v in Handler._SESSIONS.items() if v["expires"] > now}
                 Handler._SESSIONS[digest] = {"id": user["id"], "password_hash": user["password_hash"], "expires": now + 12*3600}
             self._send_json(200, {"token": token, "username": user["username"], "full_name": user["full_name"], "expires_in": 43200})
+
+        def _track_login(self, username, ok):
+            """Phone sign-ins (and failures) in the owner activity log. Never
+            the password; the attempted name is cut short and redacted."""
+            try:
+                db = self._db()
+                try:
+                    db.set_actor("" if not ok else username, "mobile")
+                    name = (username or "?")[:30]
+                    db.audit(name if ok else "?", "mobile_login" if ok else "mobile_login_failed",
+                             "ip=%s%s" % (self._client_ip(), "" if ok else " user=%s" % name),
+                             entity="session")
+                finally:
+                    db.close()
+            except Exception:
+                pass
+
+        def _log_500(self, method):
+            """Server errors go to the system log: method, path (no query, no
+            body, no headers) and the traceback with secrets redacted."""
+            try:
+                db = DB(path=db_path, init=False)
+                try:
+                    db.syslog("error", "mobile", "http_500",
+                              "%s %s" % (method, (urlparse(self.path).path or "")[:120]),
+                              traceback.format_exc()[-3000:])
+                finally:
+                    db.close()
+            except Exception:
+                pass
 
         def _api_logout(self):
             token = self.headers.get("Authorization", "")
@@ -1111,6 +1144,7 @@ def _make_handler(db_path, req_log=None):
                 pass
             except Exception as e:
                 traceback.print_exc()
+                self._log_500("GET")
                 try:
                     # v5.0: generic message — never leak internals to the phone
                     self._send_json(500, {"error": "خطأ داخلي في السيرفر"})
@@ -1150,6 +1184,7 @@ def _make_handler(db_path, req_log=None):
                 pass
             except Exception as e:
                 traceback.print_exc()
+                self._log_500("POST")
                 try:
                     self._send_json(500, {"error": "خطأ داخلي في السيرفر"})
                 except Exception:
@@ -1489,10 +1524,7 @@ def _make_handler(db_path, req_log=None):
             with WRITE_LOCK:
                 db = self._db()
                 try:
-                    drug_id = db.add_drug(fields)
-                    db.audit("mobile", "mobile_add_drug",
-                             "%s (barcode %s)" % (fields["trade_en"],
-                                                  fields["barcode"] or "-"))
+                    drug_id = db.add_drug(fields)   # the DB layer writes the activity row
                     drug = db.get_drug(drug_id)
                 except ValueError as e:
                     self._send_json(400, {"error": str(e)})

@@ -58,6 +58,14 @@ def local_git_sha(base_dir=None):
         return ""
 
 
+def _sys(db, level, event, message="", detail=""):
+    """System-log helper: never raises, never blocks the update flow."""
+    try:
+        db.syslog(level, "updater", event, message, detail)
+    except Exception:
+        pass
+
+
 def snooze_update(db, sha, now=None):
     until = (time.time() if now is None else now) + SNOOZE_SECONDS
     db.set_setting(K_SNOOZE_SHA, sha)
@@ -156,6 +164,7 @@ def check_for_update(db):
         latest = latest_commit()
     except UpdateError as e:
         _set(db, K_LAST_ERROR, str(e))
+        _sys(db, "error", "update_check_failed", str(e))
         return {"status": "error", "error": str(e)}
     _set(db, K_LAST_CHECK, _now_str())
     _set(db, K_LAST_ERROR, "")
@@ -258,6 +267,7 @@ def apply_update(db, base_dir, sha, progress=None):
     _set(db, K_APPLIED_AT, _now_str())
     _set(db, K_LAST_ERROR, "")
     db.audit("", "app_update", "applied %s (%d files)" % (sha[:8], len(files)))
+    _sys(db, "info", "update_applied", "applied %s (%d files)" % (sha[:8], len(files)))
     return updated, (rollback_dir if replaced else None)
 
 
