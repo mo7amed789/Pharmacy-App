@@ -23,3 +23,12 @@ View: open `owner_monitor.html` (any browser, no server), enter the project URL,
 - Each upload carries a `generation`. If the database has fewer log rows than already uploaded, or the row at the cursor no longer matches its fingerprint (ids reused after a restore), the app starts a new generation, moving forward only: events created after the last uploaded one are still sent, older restored history is not. A `generation_change` warning is written to the local system log and uploaded.
 - Server rows are keyed by (device login, device id, generation, kind, source id), so retries never duplicate and reused ids in a new generation are not dropped.
 - The owner id on each row is set by the server from the login (`auth.uid()`); a client cannot write rows as another account. The SQL was tested on a local Postgres with RLS (forged owner, anon, owner write, update, delete, oversized payload all rejected).
+
+
+## Email reports (optional, can be used instead of Supabase)
+- Add a `mail_report` block to `remote_monitor.json` (git-ignored): `host`, `port`, `mode` (`ssl` = implicit TLS, or `starttls`), `username`, `sender`, `to`. No password goes in this file. With only this block, nothing is ever sent to Supabase.
+- Resend example (from its docs, not yet tested live): host `smtp.resend.com`, port 465 (ssl) or 587 (starttls), username `resend`, password = the API key. The sandbox sender `onboarding@resend.dev` can only send to the Resend account owner's own address.
+- The key is entered in Settings > Remote monitoring > "مفتاح الإيميل" and stored encrypted with Windows DPAPI in `<database>.rmsecret` (git-ignored). Saving is refused on non-Windows. DPAPI has not been tested on a real Windows PC yet.
+- One combined report every 6 hours, summary only (action, source, counts, system event names). No customer names, prices, before/after values or keys.
+- Mail is sent only over verified TLS (certificate and host name checked), with no plaintext fallback. TLS protects the message in transit; it is not end-to-end encryption, so the provider and the mailbox can read it.
+- Failures keep the cursors and retry later; they do not flood the log. Enable shows a preview with the destination first.
