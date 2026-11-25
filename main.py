@@ -5928,6 +5928,7 @@ class App:
             ttk.Button(_rf, text="👁️ اعرض ما سيُرسل ووجهته", command=self.remote_preview).pack(side="left", padx=4)
             ttk.Button(_rf, text="✅ تفعيل", command=self.remote_enable).pack(side="left", padx=4)
             ttk.Button(_rf, text="⛔ إيقاف", command=self.remote_disable).pack(side="left", padx=4)
+            ttk.Button(_rf, text="🔑 مفتاح الإيميل", command=self.remote_set_email_key).pack(side="left", padx=4)
             self.remote_refresh()
         self.system_log_refresh()
 
@@ -6501,6 +6502,13 @@ class App:
             head += "ملخص: المستخدم والدور والإجراء والفرع والوقت، بدون تفاصيل الأسعار أو العملاء أو قبل/بعد.\n"
         else:
             head += "كامل: يشمل التفاصيل وقبل/بعد (قد تحتوي أسماء عملاء وأسعار). لا كلمات سر ولا مفاتيح أبداً.\n"
+        try:
+            import email_report
+            _ecfg = email_report.load_email_cfg()
+            if _ecfg:
+                head += "تقرير بالإيميل كل 6 ساعات إلى: %s (ملخص فقط، اتصال مشفّر TLS)\n" % _ecfg["to"]
+        except Exception:
+            pass
         return pv, head + "\nأمثلة مما سيُرسل:\n" + _json.dumps(pv["sample"], ensure_ascii=False, indent=1)[:1800]
 
     def remote_preview(self):
@@ -6523,6 +6531,18 @@ class App:
             return
         remote_monitor.enable(self.db, self.cb_remote_level.get() or "summary")
         self.remote_refresh()
+
+    def remote_set_email_key(self):
+        """Store the SMTP password/API key encrypted for this Windows user (never in a plain file)."""
+        import email_report
+        key = simpledialog.askstring("مفتاح الإيميل", "الصق مفتاح الإرسال (يُحفظ مشفّراً لهذا المستخدم فقط):", show="*", parent=self.root)
+        if not key:
+            return
+        try:
+            email_report.store_secret(self.db, key.strip())
+            messagebox.showinfo("المتابعة عن بعد", "تم حفظ المفتاح مشفّراً.")
+        except Exception as e:
+            messagebox.showerror("المتابعة عن بعد", "تعذّر الحفظ الآمن: %s" % e)
 
     def remote_disable(self):
         import remote_monitor
