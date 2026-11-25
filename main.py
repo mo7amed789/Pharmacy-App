@@ -492,6 +492,14 @@ class App:
         # the admin sees every branch (switchable from the top bar)
         _b, _u = db.scope_for_user(self.username)
         db.set_scope(_b, _u)
+        db.set_actor(self.username, "desktop")
+        try:
+            import updater as _upd
+            db.app_version = (_upd.local_git_sha() or db.get_setting("update_applied_sha", ""))[:12]
+        except Exception:
+            pass
+        db.syslog("info", "desktop", "app_start", "user=%s role=%s" % (self.username, self.role))
+        self._install_error_logging()
         self.theme_name = ui_theme.get_theme_name(db)
         # v5.9 customization (safe defaults; missing keys fall back)
         self.ui_accent = db.get_setting("ui_accent", "teal") or "teal"
@@ -1749,7 +1757,6 @@ class App:
         except ValueError as e:
             messagebox.showerror("خطأ", str(e))
             return
-        self.db.audit(self.username, "sale", "%s total %.2f pay=%s" % (inv, total2, pay))
         msg = "تم البيع ✅\nفاتورة: %s\nالإجمالي: %s" % (inv, money(total2))
         if pay == "cash" and change:
             msg += "\nالباقي للعميل: %s" % money(change)
@@ -2153,11 +2160,9 @@ class App:
                     self.db.update_drug(drug["id"], data)
                     if data["barcode"]:
                         self.db.link_barcode(data["barcode"], drug["id"])
-                    self.db.audit(self.username, "edit_drug", "drug %s price %.2f" % (drug["id"], data["sell_price"]))
                     saved_id = drug["id"]
                 else:
                     saved_id = self.db.add_drug(data)
-                    self.db.audit(self.username, "add_drug", "drug %s %s" % (saved_id, data["trade_en"]))
             except ValueError as e:
                 messagebox.showerror("خطأ", str(e))
                 return
@@ -2327,7 +2332,6 @@ class App:
         reason = simpledialog.askstring("سبب التعديل", "سبب التعديل (جرد / تالف / ...):") or "جرد"
         try:
             self.db.adjust_stock(d["id"], qty, reason, self.username)
-            self.db.audit(self.username, "adjust_stock", "drug %s delta %d (%s)" % (d["id"], qty, reason))
         except ValueError as e:
             messagebox.showerror("خطأ", str(e))
             return
@@ -2650,7 +2654,6 @@ class App:
         except ValueError as e:
             messagebox.showerror("خطأ", str(e))
             return
-        self.db.audit(self.username, "purchase", "purchase %s total %.2f supplier %s" % (pid, total, name))
         messagebox.showinfo("تم", "تم حفظ فاتورة الشراء #%d\nالإجمالي: %s\nتم تحديث المخزون والأسعار" % (pid, money(total)))
         self.purchase_lines = []
         self.pur_refresh_table()
@@ -2876,7 +2879,6 @@ class App:
                 return
             nid = self.db.add_customer(ents["name"].get().strip(), ents["phone"].get().strip(),
                                        safe_float(ents["limit"].get()), ents["notes"].get().strip())
-            self.db.audit(self.username, "add_customer", "customer %s" % nid)
             win.destroy()
             self.cust_refresh()
             self.cb_customer["values"] = ["عميل نقدي"] + [c["name"] for c in self.db.customers()]
@@ -3017,7 +3019,6 @@ class App:
         def do_in():
             try:
                 self.db.check_in(self.username)
-                self.db.audit(self.username, "attendance_in", "")
             except ValueError as e:
                 messagebox.showerror("الحضور", str(e), parent=win)
             refresh()
@@ -3025,7 +3026,6 @@ class App:
         def do_out():
             try:
                 self.db.check_out(self.username)
-                self.db.audit(self.username, "attendance_out", "")
             except ValueError as e:
                 messagebox.showerror("الحضور", str(e), parent=win)
             refresh()
@@ -3052,7 +3052,6 @@ class App:
                     except (ValueError, PermissionError) as e:
                         messagebox.showerror("خطأ", str(e), parent=dlg)
                         return
-                    self.db.audit(self.username, "attendance_manual", ents["u"].get().strip())
                     dlg.destroy()
                     refresh()
                 ttk.Button(dlg, text="حفظ", style="Success.TButton", command=save).pack(pady=12)
@@ -3104,7 +3103,6 @@ class App:
             except (ValueError, PermissionError) as e:
                 messagebox.showerror("خطأ", str(e), parent=win)
                 return
-            self.db.audit(self.username, "branch_add", e_name.get().strip())
             e_name.delete(0, "end")
             e_addr.delete(0, "end")
             refresh()
@@ -3115,7 +3113,6 @@ class App:
                 return
             b = next(x for x in self._branch_rows if str(x["id"]) == sel[0])
             self.db.set_branch_active(self.username, b["id"], not b["active"])
-            self.db.audit(self.username, "branch_toggle", b["name"])
             refresh()
 
         def assign():
@@ -3125,7 +3122,6 @@ class App:
                 return
             b = next(x for x in self._branch_rows if x["name"] == cb.get())
             self.db.set_user_branch(self.username, sel[0], b["id"])
-            self.db.audit(self.username, "user_branch", "%s -> %s" % (sel[0], b["name"]))
             refresh()
         ttk.Button(form, text="➕ إضافة فرع", style="Success.TButton", command=add).pack(side="left", padx=6)
         ttk.Button(win, text="إيقاف / تفعيل الفرع المحدد", command=toggle).pack(anchor="w", padx=12, pady=6)
@@ -4033,7 +4029,6 @@ class App:
             messagebox.showerror("خطأ", str(e))
             return
         self.current_shift = self.db.open_shift_for(self.username)
-        self.db.audit(self.username, "open_shift", "shift %s" % sid)
         self.cash_refresh()
         messagebox.showinfo("تم", "تم فتح الوردية #%d" % sid)
 
@@ -4046,7 +4041,6 @@ class App:
             messagebox.showerror("خطأ", str(e))
             return
         self.current_shift = self.db.open_shift_for(self.username)
-        self.db.audit(self.username, "join_shift", "shift %s" % sid)
         self.cash_refresh()
         messagebox.showinfo("تم", "انضممت للوردية #%d" % sid)
 
@@ -4063,7 +4057,6 @@ class App:
         except ValueError as e:
             messagebox.showerror("خطأ", str(e))
             return
-        self.db.audit(self.username, "leave_shift", "shift %s" % sid)
         self.current_shift = None
         self.cash_refresh()
 
@@ -4108,10 +4101,6 @@ class App:
         except ValueError as e:
             messagebox.showerror("خطأ", str(e))
             return
-        self.db.audit(self.username, "close_shift",
-                      "shift %s expected %.2f counted %.2f diff %.2f" % (
-                          self.current_shift["id"], summ["expected_cash"],
-                          summ["counted_cash"], summ["difference"]))
         self.current_shift = None
         self.cash_refresh()
         diff = summ["difference"]
@@ -4133,7 +4122,6 @@ class App:
         self.db.add_expense(self.e_exp_kind.get().strip(), safe_float(self.e_exp_amt.get()),
                             self.e_exp_notes.get().strip(), self.username,
                             shift_id=self.current_shift["id"] if self.current_shift else None)
-        self.db.audit(self.username, "expense", "%s %.2f" % (self.e_exp_kind.get(), safe_float(self.e_exp_amt.get())))
         self.e_exp_amt.delete(0, "end")
         self.e_exp_notes.delete(0, "end")
         self.cash_refresh()
@@ -5899,12 +5887,30 @@ class App:
         self.lbl_audit_count.pack(anchor="w")
         self.txt_audit = tk.Text(f, width=100, height=12, font=("Segoe UI", 10))
         self.txt_audit.pack(fill="both", expand=True, pady=4)
-        ttk.Button(f, text="تحديث سجل التدقيق", command=self.audit_refresh).pack(anchor="w", pady=4)
+        _ab = ttk.Frame(f)
+        _ab.pack(anchor="w", pady=4)
+        ttk.Button(_ab, text="تحديث سجل التدقيق", command=self.audit_refresh).pack(side="left")
+        ttk.Button(_ab, text="⬇️ تصدير سجل النشاط (CSV)",
+                   command=lambda: self.export_log_csv("activity")).pack(side="left", padx=6)
         self.audit_refresh()
+        # ---------- system log: errors / updates / startup (not staff activity) ----------
+        ttk.Separator(f, orient="horizontal").pack(fill="x", pady=10)
+        ttk.Label(f, text="🛠️ سجل النظام — الأخطاء والتحديثات والتشغيل (بدون كلمات سر أو مفاتيح):",
+                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        _sf = ttk.Frame(f)
+        _sf.pack(anchor="w", fill="x", pady=2)
+        ttk.Label(_sf, text="المستوى:").pack(side="left")
+        self.cb_sys_level = ttk.Combobox(_sf, width=10, state="readonly", values=["", "error", "warning", "info"])
+        self.cb_sys_level.pack(side="left", padx=4)
+        ttk.Button(_sf, text="🔍 عرض", command=self.system_log_refresh).pack(side="left", padx=6)
+        ttk.Button(_sf, text="⬇️ تصدير سجل النظام (CSV)",
+                   command=lambda: self.export_log_csv("system")).pack(side="left", padx=6)
+        self.txt_syslog = tk.Text(f, width=100, height=10, font=("Segoe UI", 10))
+        self.txt_syslog.pack(fill="both", expand=True, pady=4)
+        self.system_log_refresh()
 
     def save_pharmacy_name(self):
-        self.db.conn.execute("UPDATE settings SET value=? WHERE key='pharmacy_name'",
-                             (self.e_pharmacy.get().strip(),))
+        self.db.set_setting("pharmacy_name", self.e_pharmacy.get().strip())
         # v6.3: pharmacy phone is saved with the name.
         self.db.set_setting("pharmacy_phone", self.e_pharmacy_phone.get().strip())
         self.db.conn.commit()
@@ -6010,7 +6016,6 @@ class App:
             except Exception as e:
                 messagebox.showerror("خطأ", "اسم المستخدم موجود بالفعل: %s" % e)
                 return
-            self.db.audit(self.username, "add_user", ents["username"].get())
             win.destroy()
             messagebox.showinfo("تم", "تمت إضافة المستخدم")
         ttk.Button(win, text="حفظ", command=save, style="Success.TButton").pack(pady=12)
@@ -6030,6 +6035,7 @@ class App:
         except Exception:
             pass
         self.db.audit(self.username, "backup", dest)
+        self.db.syslog("info", "desktop", "backup_ok", os.path.basename(dest))
         messagebox.showinfo("تم", "تم حفظ نسخة احتياطية (تم التحقق من سلامتها) في:\n%s" % dest)
         self.show_banner("💾 تم حفظ نسخة احتياطية: %s" % dest, "success")
 
@@ -6074,7 +6080,12 @@ class App:
                         pass
             shutil.copyfile(path, db_path)
             self.db = DB(path=db_path)
+            self.db.set_actor(self.username, "desktop")
+            _rb, _ru = self.db.scope_for_user(self.username)
+            self.db.set_scope(_rb, _ru)
             self.db.audit(self.username, "restore", "restored from %s" % path)
+            self.db.syslog("warning", "desktop", "restore_done",
+                           "database replaced from %s (history after that backup is not in this file; the previous file was kept)" % os.path.basename(path))
             messagebox.showinfo("تم", "تمت الاستعادة من:\n%s\nأعد تشغيل البرنامج لتحديث كل الشاشات." % path)
             self.show_banner("✅ تمت استعادة النسخة الاحتياطية — أعد تشغيل البرنامج", "success")
         except Exception as e:
@@ -6387,6 +6398,7 @@ class App:
                     self._update_restart_required = True
                 self._refresh_update_ui({"status": "up_to_date"} if error is None else None)
                 if error is not None:
+                    self.db.syslog("error", "updater", "update_failed", str(error))
                     self.show_banner("❌ فشل تثبيت التحديث", "error")
                     messagebox.showerror("فشل التحديث", str(error))
                     return
@@ -6397,6 +6409,49 @@ class App:
                                     "ليعمل بالإصدار الجديد." % updated)
             self._ui_post(ui)
         cloud_sync.run_in_background(work, done)
+
+    def system_log_refresh(self):
+        if not hasattr(self, "txt_syslog"):
+            return
+        rows = self.db.system_log_query(level=self.cb_sys_level.get().strip(), limit=200)
+        self.txt_syslog.delete("1.0", "end")
+        for r in rows:
+            self.txt_syslog.insert("end", "%s | %s | %s/%s | %s%s\n" % (
+                r["created_at"], r["level"], r["component"], r["event"], r["message"],
+                (" | " + r["detail"].strip().splitlines()[-1][:200]) if r["detail"].strip() else ""))
+        if not rows:
+            self.txt_syslog.insert("end", "لا توجد أحداث نظام بعد.\n")
+
+    def export_log_csv(self, kind):
+        if not self.is_admin:
+            messagebox.showerror("صلاحيات", "تصدير السجلات للمدير فقط")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
+                                            initialfile="system_log.csv" if kind == "system" else "activity_log.csv")
+        if not path:
+            return
+        try:
+            n = self.db.export_logs_csv(path, kind)
+        except Exception as e:
+            messagebox.showerror("خطأ", "تعذر التصدير: %s" % e)
+            return
+        self.db.audit(self.username, "export_log", "%s: %d rows" % (kind, n), entity="log")
+        messagebox.showinfo("تم", "تم تصدير %d سطر" % n)
+
+    def _install_error_logging(self):
+        """Uncaught errors in any button / callback go to the system log (the
+        console traceback stays too). Passwords and keys are redacted."""
+        import traceback as _tb
+        app = self
+
+        def handler(exc, val, tb):
+            try:
+                app.db.syslog("error", "desktop", "ui_exception", "%s: %s" % (exc.__name__, val),
+                              "".join(_tb.format_exception(exc, val, tb))[-3000:])
+            except Exception:
+                pass
+            _tb.print_exception(exc, val, tb)
+        self.root.report_callback_exception = handler
 
     def audit_refresh(self):
         """v6.13: السجل بفلاتر (بحث حر / نوع الإجراء / المستخدم).
@@ -6421,15 +6476,24 @@ class App:
         action = self.cb_audit_action.get().strip()
         user = self.cb_audit_user.get().strip()
         rows = self.db.audit_query(text=text, action=action, user=user, limit=200)
+        _bn = {b["id"]: b["name"] for b in self.db.list_branches()}
         self.txt_audit.delete("1.0", "end")
         for a in rows:
-            self.txt_audit.insert("end", "%s | %s | %s | %s\n" % (
-                a["created_at"], a["user"], a["action"], a["details"]))
+            line = "%s | %s%s | %s | %s | %s" % (
+                a["created_at"], a["user"], (" (%s)" % a["role"]) if a.get("role") else "",
+                a.get("source") or "-", a["action"], a["details"])
+            if a.get("branch_id") is not None:
+                line += " | فرع: %s" % _bn.get(a["branch_id"], a["branch_id"])
+            if a.get("shift_id") is not None:
+                line += " | وردية #%s" % a["shift_id"]
+            if a.get("before_json") or a.get("after_json"):
+                line += " | قبل: %s → بعد: %s" % (a.get("before_json") or "-", a.get("after_json") or "-")
+            self.txt_audit.insert("end", line + "\n")
         total = self.db.audit_count()
         shown = len(rows)
         filters_on = bool(text or action or user)
         self.lbl_audit_count.config(
-            text="يظهر %d%s من إجمالي %d حدث — يُحتفظ تلقائياً بأحدث 5,000 حدث فقط حتى لا يكبر الملف."
+            text="يظهر %d%s من إجمالي %d حدث — يُحتفظ بالسجل سنتين."
                  % (shown, " (مفلترة)" if filters_on else " (الأحدث)", total))
 
 
