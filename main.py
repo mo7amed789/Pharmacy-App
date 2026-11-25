@@ -4090,13 +4090,16 @@ class App:
                             "ليست محسوبة في هذه الوردية، راجعها قبل الإغلاق." % (
                                 summ["no_shift_date"], summ["no_shift_count"],
                                 money(summ["no_shift_total"])))
+        # Blind count: the amounts that would reveal the expected cash are
+        # NOT shown until the count is confirmed (approved by the user).
         counted = simpledialog.askfloat(
             "إغلاق الوردية",
-            "رصيد البداية: %s\nنقدي محصَّل في هذه الوردية: %s\nمصروفات الوردية: %s\n"
-            "المتوقع في الدرج: %s%s\n\nأدخل المبلغ الذي عدّدته في الدرج:" % (
-                money(summ["opening_float"]), money(summ["cash_collected"]),
-                money(summ["expenses"]), money(summ["expected_cash"]), no_shift_txt))
+            "عدّ النقدية في الدرج وأدخل المبلغ.\n"
+            "المتوقع والفرق يظهران بعد تأكيد العدّ.%s\n\nأدخل المبلغ الذي عدّدته في الدرج:" % no_shift_txt)
         if counted is None:
+            return
+        if not messagebox.askyesno("تأكيد العدّ",
+                                   "المبلغ الذي عدّدته: %s\nبعد التأكيد يُغلق الدرج ويظهر المتوقع والفرق. تأكيد؟" % money(counted)):
             return
         try:
             summ = self.db.close_shift(self.current_shift["id"], counted, actor=self.username)
