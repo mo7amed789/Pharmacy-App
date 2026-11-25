@@ -106,7 +106,7 @@ class EmailReport(unittest.TestCase):
 
     def write_cfg(self, mode, port):
         json.dump({"url": "https://x.supabase.co", "anon_key": "k", "email": "e@x", "password": "p",
-                   "email": {"host": "localhost", "port": port, "mode": mode, "username": "resend",
+                   "mail_report": {"host": "localhost", "port": port, "mode": mode, "username": "resend",
                              "sender": "onboarding@resend.dev", "to": "owner@example.com"}}, open(self.cfgfile, "w"))
 
     def tearDown(self):
