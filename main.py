@@ -4009,9 +4009,11 @@ class App:
             return  # v6.14
         if self.current_shift:
             members = "، ".join(m["username"] for m in self.db.shift_members(self.current_shift["id"]))
-            self.lbl_shift.config(text="الوردية الحالية: #%d — فتحت %s — رصيد أول المدة %s — الموظفون: %s" % (
-                self.current_shift["id"], self.current_shift["opened_at"],
-                money(self.current_shift["opening_float"]), members))
+            # the opening float is part of the expected drawer cash, so only
+            # the admin sees it (blind count for employees)
+            flt = (" — رصيد أول المدة %s" % money(self.current_shift["opening_float"])) if self.is_admin else ""
+            self.lbl_shift.config(text="الوردية الحالية: #%d — فتحت %s%s — الموظفون: %s" % (
+                self.current_shift["id"], self.current_shift["opened_at"], flt, members))
         else:
             self.lbl_shift.config(text="لا توجد وردية مفتوحة — افتح وردية قبل البيع")
         for i in self.tree_exp.get_children():
