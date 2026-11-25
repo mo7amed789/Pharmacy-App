@@ -167,5 +167,66 @@ class RolesBranches(unittest.TestCase):
         self.db.set_scope(a)
         self.assertEqual(self.db.report_daily()["total"], 30)
 
+    def test_customer_history_scoped(self):
+        d = self._drug()
+        a = self.db.add_branch("boss", "A")
+        b = self.db.add_branch("boss", "B")
+        self._stock(d["id"], 100, a)
+        self._stock(d["id"], 100, b)
+        cid = self.db.conn.execute("SELECT id FROM customers LIMIT 1").fetchone()
+        if cid is None:
+            self.db.conn.execute("INSERT INTO customers (name, phone, credit_limit, created_at) VALUES ('c','',1000,'x')")
+            self.db.conn.commit()
+            cid = self.db.conn.execute("SELECT id FROM customers LIMIT 1").fetchone()
+        cid = cid[0]
+        self.db.set_scope(a)
+        self.db.create_sale("emp1", self._items(d, 1), customer_id=cid, payment_method="credit", paid=0)
+        self.db.create_sale("emp2", self._items(d, 1), customer_id=cid, payment_method="credit", paid=0)
+        self.db.set_scope(b)
+        self.db.create_sale("boss", self._items(d, 1), customer_id=cid, payment_method="credit", paid=0)
+        self.db.set_scope(a, user="emp1")
+        hist = [r for r in self.db.customer_history(cid) if r.get("status") != "payment"]
+        self.assertEqual([r["cashier"] for r in hist], ["emp1"])
+        self.db.set_scope(None)
+        self.assertEqual(len(self.db.customer_history(cid)), 3)
+
+    def test_premigration_backup_is_made(self):
+        import sqlite3
+        path = os.path.join(self.dir, "old.db")
+        db = DB(path=path)
+        db.add_drug({"trade_en": "Z", "trade_ar": "ز", "scientific": "x", "company": "x", "form": "Tabs",
+                     "strength": "1", "category": "t", "strips_per_box": 1, "tablets_per_strip": 1,
+                     "buy_price": 1, "sell_price": 2, "min_stock": 1, "barcode": ""})
+        db.close()
+        # simulate a database from before branches existed
+        c = sqlite3.connect(path)
+        c.execute("DROP TRIGGER IF EXISTS trg_stock_mov_branch")
+        for t in ("batches", "sales", "expenses", "purchases", "stock_movements", "customer_payments"):
+            c.execute("ALTER TABLE %s DROP COLUMN branch_id" % t)
+        c.commit(); c.close()
+        db = DB(path=path)
+        folder = os.path.join(self.dir, "backups")
+        self.assertTrue(any("pre_migration_branches" in f for f in os.listdir(folder)), os.listdir(folder))
+        self.assertTrue(DB.verify_backup(os.path.join(folder, [f for f in os.listdir(folder) if "pre_migration_branches" in f][0])))
+
+    def test_shared_shift_close_and_leave_rules(self):
+        bid = self.db.add_branch("boss", "Main")
+        for u in ("emp1", "emp2"):
+            self.db.set_user_branch("boss", u, bid)
+        sid = self.db.open_shift("emp1", 0)
+        self.db.join_shift("emp2")
+        with self.assertRaises(PermissionError):
+            self.db.close_shift(sid, 0, actor="emp2")      # a member who did not open it
+        self.db.check_in("emp2")
+        self.db.leave_shift("emp2")                          # leaves, shift stays open, departure recorded
+        self.assertIsNone(self.db.open_shift_for("emp2"))
+        self.assertIsNotNone(self.db.open_shift_for("emp1"))
+        self.assertIsNone(self.db.attendance_open_for("emp2"))
+        with self.assertRaises(ValueError):
+            self.db.leave_shift("emp1")                      # last member must close instead
+        self.db.close_shift(sid, 0, actor="emp1")            # opener may close
+        sid2 = self.db.open_shift("emp2", 0)
+        self.db.close_shift(sid2, 0, actor="boss")           # admin may close any shift
+
 if __name__ == "__main__":
     unittest.main()
