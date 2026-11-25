@@ -203,6 +203,24 @@ class EmailReport(unittest.TestCase):
         ER.tick(self.db, now=t + 7 * 3600, context=self.ctx)
         self.assertIn("after_restore", "\n".join(self.srv.mails))
 
+    def test_email_only_config_never_contacts_supabase(self):
+        json.dump({"mail_report": {"host": "localhost", "port": self.srv.port, "mode": "ssl", "username": "resend",
+                                   "sender": "onboarding@resend.dev", "to": "owner@example.com"}}, open(self.cfgfile, "w"))
+        self.assertIsNone(RM.load_config())
+        pv = RM.preview(self.db)
+        self.assertTrue(pv["configured"])
+        self.assertIn("owner@example.com", pv["destination"])
+        self.assertNotIn("supabase", pv["destination"].lower())
+        calls = []
+        orig = RM.Client
+        RM.Client = lambda *a, **k: calls.append(1) or orig(*a, **k)
+        try:
+            self.assertIsNone(RM.sync_once(self.db))
+        finally:
+            RM.Client = orig
+        self.assertEqual(calls, [])
+        self.assertIn("6", RM.status_text(self.db))
+
 
 if __name__ == "__main__":
     unittest.main()
