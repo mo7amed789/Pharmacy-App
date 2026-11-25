@@ -19,13 +19,16 @@ insert into public.monitor_roles (uid, role) values
 on conflict (uid) do update set role = excluded.role;
 
 create table if not exists public.monitor_events (
-  id         bigint generated always as identity primary key,
-  device_id  text   not null,
-  kind       text   not null check (kind in ('activity','system','heartbeat')),
-  src_id     bigint not null,
+  id          bigint generated always as identity primary key,
+  -- who wrote the row is bound to the login, never to anything the client sends
+  device_uid  uuid   not null default auth.uid(),
+  device_id   text   not null check (char_length(device_id) <= 64),
+  generation  text   not null check (char_length(generation) between 1 and 32),
+  kind        text   not null check (kind in ('activity','system','heartbeat')),
+  src_id      bigint not null check (src_id >= 0),
   received_at timestamptz not null default now(),
-  payload    jsonb  not null,
-  unique (device_id, kind, src_id)
+  payload     jsonb  not null check (pg_column_size(payload) < 16384),
+  unique (device_uid, device_id, generation, kind, src_id)
 );
 create index if not exists monitor_events_recent on public.monitor_events (received_at desc);
 
@@ -36,8 +39,7 @@ alter table public.monitor_events enable row level security;
 revoke all on public.monitor_roles  from anon, authenticated;
 -- anonymous visitors get nothing; the device may only insert; the owner may only read
 revoke all on public.monitor_events from anon, authenticated;
-grant insert on public.monitor_events to authenticated;
-grant select on public.monitor_events to authenticated;
+grant insert, select on public.monitor_events to authenticated;
 
 create or replace function public.monitor_has_role(r text) returns boolean
 language sql security definer set search_path = public stable as $$
@@ -46,7 +48,14 @@ $$;
 
 drop policy if exists monitor_device_insert on public.monitor_events;
 create policy monitor_device_insert on public.monitor_events
-  for insert to authenticated with check (public.monitor_has_role('device'));
+  for insert to authenticated
+  with check (public.monitor_has_role('device') and device_uid = auth.uid());
+
+-- The device may see only the rows it wrote itself. Postgres needs this for ON CONFLICT DO NOTHING
+-- (safe retries after a dropped connection). It never sees other devices or the owner's view.
+drop policy if exists monitor_device_read_own on public.monitor_events;
+create policy monitor_device_read_own on public.monitor_events
+  for select to authenticated using (public.monitor_has_role('device') and device_uid = auth.uid());
 
 drop policy if exists monitor_owner_read on public.monitor_events;
 create policy monitor_owner_read on public.monitor_events
