@@ -222,11 +222,21 @@ class RolesBranches(unittest.TestCase):
         self.assertIsNone(self.db.open_shift_for("emp2"))
         self.assertIsNotNone(self.db.open_shift_for("emp1"))
         self.assertIsNone(self.db.attendance_open_for("emp2"))
-        with self.assertRaises(ValueError):
-            self.db.leave_shift("emp1")                      # last member must close instead
-        self.db.close_shift(sid, 0, actor="emp1")            # opener may close
+        # opener leaves; then the last (non-opener) member can still leave
+        self.db.join_shift("emp2")
+        self.db.check_in("emp1")
+        self.db.leave_shift("emp1")
+        self.assertIsNone(self.db.attendance_open_for("emp1"))
+        self.db.leave_shift("emp2")
+        self.assertEqual(self.db.shift_members(sid), [])
+        self.assertEqual(self.db.conn.execute("SELECT status FROM shifts WHERE id=?", (sid,)).fetchone()[0], "open")
+        with self.assertRaises(PermissionError):
+            self.db.close_shift(sid, 0, actor="emp2")        # non-opener still cannot close
+        self.db.close_shift(sid, 0, actor="boss")            # admin can close the memberless shift
         sid2 = self.db.open_shift("emp2", 0)
-        self.db.close_shift(sid2, 0, actor="boss")           # admin may close any shift
+        self.db.join_shift("emp1")
+        self.db.leave_shift("emp2")                          # opener leaves, emp1 remains
+        self.db.close_shift(sid2, 0, actor="emp2")           # opener may still close
 
 if __name__ == "__main__":
     unittest.main()
