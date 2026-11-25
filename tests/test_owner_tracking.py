@@ -21,7 +21,7 @@ def _drug(db, price=10):
                             buy_price=5, sell_price=price, min_stock=0, barcode=""))
 
 
-class Tracking(unittest.TestCase):
+class Base(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.path = os.path.join(self.dir, "t.db")
@@ -39,6 +39,9 @@ class Tracking(unittest.TestCase):
         q = "SELECT * FROM audit_log" + (" WHERE action=?" if action else "") + " ORDER BY id"
         return [dict(r) for r in self.db.conn.execute(q, (action,) if action else ()).fetchall()]
 
+
+
+class Tracking(Base):
     def test_sale_has_actor_role_branch_shift_source_and_after(self):
         self.db.set_actor("emp1", "desktop")
         b, u = self.db.scope_for_user("emp1")
@@ -207,6 +210,144 @@ class PhoneTracking(unittest.TestCase):
         self.assertNotIn("WrongPass999", dump)
         self.assertNotIn("S3cretPass", dump)
         db.close()
+
+
+class Integrity(Base):
+    """Logs cannot be deleted by staff / app SQL before retention, and a business
+    write is never saved without its activity row."""
+
+    def test_recent_rows_cannot_be_deleted_or_updated(self):
+        self.db.syslog("error", "t", "boom", "x")
+        self.db.audit("boss", "login", "")
+        for sql in ("DELETE FROM audit_log", "DELETE FROM system_log",
+                    "DELETE FROM audit_log WHERE id>0", "UPDATE audit_log SET user='x'",
+                    "UPDATE system_log SET message='x'"):
+            with self.assertRaises(sqlite3.DatabaseError, msg=sql):
+                self.db.conn.execute(sql)
+            self.db.conn.rollback()
+        self.assertGreater(self.db.conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0], 0)
+        self.assertGreater(self.db.conn.execute("SELECT COUNT(*) FROM system_log").fetchone()[0], 0)
+
+    def test_only_aged_out_rows_are_pruned(self):
+        old_a = "2000-01-01T00:00:00"
+        self.db.conn.execute("INSERT INTO audit_log (user,action,details,created_at) VALUES ('x','old','',?)", (old_a,))
+        self.db.conn.execute("INSERT INTO system_log (created_at,level,component,event) VALUES (?,?,?,?)",
+                             (old_a, "info", "t", "old"))
+        # 400 days: past the 365-day system retention, inside the 730-day activity retention
+        from datetime import datetime, timedelta
+        mid = (datetime.now() - timedelta(days=400)).isoformat(timespec="seconds")
+        self.db.conn.execute("INSERT INTO audit_log (user,action,details,created_at) VALUES ('x','mid','',?)", (mid,))
+        self.db.conn.execute("INSERT INTO system_log (created_at,level,component,event) VALUES (?,?,?,?)",
+                             (mid, "info", "t", "mid"))
+        self.db.conn.commit()
+        self.db._prune_audit_log()
+        acts = {r[0] for r in self.db.conn.execute("SELECT action FROM audit_log")}
+        evs = {r[0] for r in self.db.conn.execute("SELECT event FROM system_log")}
+        self.assertNotIn("old", acts); self.assertIn("mid", acts)
+        self.assertNotIn("old", evs); self.assertNotIn("mid", evs)
+        # a row with a blank date can never be deleted
+        self.db.conn.execute("INSERT INTO audit_log (user,action,details,created_at) VALUES ('x','blank','','')")
+        self.db.conn.commit()
+        self.db._prune_audit_log()
+        self.assertIn("blank", {r[0] for r in self.db.conn.execute("SELECT action FROM audit_log")})
+
+    def test_app_code_never_deletes_logs_except_prune(self):
+        import database
+        src = inspect.getsource(database)
+        self.assertEqual(len(re.findall(r"DELETE FROM (audit_log|system_log)", src)), 2)
+        for f in ("main.py", "mobile_server.py", "cloud_sync.py", "updater.py", "automation.py"):
+            with open(os.path.join(os.path.dirname(__file__), "..", f), encoding="utf-8") as fh:
+                self.assertNotRegex(fh.read(), r"DELETE FROM (audit_log|system_log)|DROP TABLE (audit_log|system_log)")
+
+    def _break_audit_inserts(self):
+        self.db.conn.execute("""CREATE TRIGGER t_break BEFORE INSERT ON audit_log
+            BEGIN SELECT RAISE(ABORT, 'disk full simulated'); END""")
+        self.db.conn.commit()
+
+    def _count(self, t):
+        return self.db.conn.execute("SELECT COUNT(*) FROM %s" % t).fetchone()[0]
+
+    def test_audit_failure_rolls_back_sale_stock_and_shift(self):
+        self.db.set_actor("emp1", "desktop")
+        b, u = self.db.scope_for_user("emp1"); self.db.set_scope(b, u)
+        sid = self.db.open_shift("emp1", 50)
+        stock0 = self.db.conn.execute("SELECT SUM(qty_units) FROM batches").fetchone()[0]
+        sales0 = self._count("sales")
+        self._break_audit_inserts()
+        with self.assertRaises(RuntimeError):
+            self.db.create_sale_from_items("emp1", [dict(drug_id=self.did, unit="pill", qty=2)],
+                                           payment_method="cash", paid=20, shift_id=sid)
+        self.assertEqual(self._count("sales"), sales0)
+        self.assertEqual(self.db.conn.execute("SELECT SUM(qty_units) FROM batches").fetchone()[0], stock0)
+        # a later unrelated commit must not resurrect the half-done sale
+        self.db.conn.execute("DROP TRIGGER t_break"); self.db.conn.commit()
+        self.assertEqual(self._count("sales"), sales0)
+        self.assertEqual(self.db.conn.execute("SELECT SUM(qty_units) FROM batches").fetchone()[0], stock0)
+
+    def test_audit_failure_blocks_every_other_business_write(self):
+        self.db.set_actor("boss", "desktop")
+        self._break_audit_inserts()
+        n_drugs, n_exp = self._count("drugs"), self._count("expenses")
+        n_cust, n_move = self._count("customers"), self._count("stock_movements")
+        with self.assertRaises(RuntimeError):
+            _drug(self.db, 11)
+        with self.assertRaises(RuntimeError):
+            self.db.add_expense("rent", 10, "", user="boss")
+        with self.assertRaises(RuntimeError):
+            self.db.adjust_stock(self.did, 5, "t", "boss")
+        with self.assertRaises(RuntimeError):
+            self.db.add_customer("Zed", "01000000000")
+        self.assertEqual(self._count("drugs"), n_drugs)
+        self.assertEqual(self._count("expenses"), n_exp)
+        self.assertEqual(self._count("customers"), n_cust)
+        self.assertEqual(self._count("stock_movements"), n_move)
+        self.assertGreaterEqual(self._count("system_log"), 1)  # the failure itself is recorded
+
+    def test_informational_event_failure_is_recorded_in_system_log(self):
+        self._break_audit_inserts()
+        self.db.audit("boss", "login", "role=admin")  # must not raise
+        r = self.db.conn.execute("SELECT * FROM system_log WHERE event='audit_write_failed'").fetchone()
+        self.assertIsNotNone(r)
+
+
+class CloudSyncErrors(Base):
+    def test_failed_syncs_reach_the_system_log_once_per_window(self):
+        import cloud_sync, supabase_client
+
+        class Boom:
+            def upsert_products(self, rows):
+                raise supabase_client.SupabaseError("HTTP 503 apikey=SUPERSECRETKEY123")
+        orig = (cloud_sync._client, supabase_client.is_configured)
+        cloud_sync._client = lambda: Boom()
+        supabase_client.is_configured = lambda: True
+        try:
+            self.assertFalse(cloud_sync.push_drug_safe(self.db, self.did))
+            self.assertFalse(cloud_sync.push_drug_safe(self.db, self.did))
+        finally:
+            cloud_sync._client, supabase_client.is_configured = orig
+        rows = self.db.system_log_query(component="cloud_sync")
+        self.assertEqual(len(rows), 1)  # same error inside 30 min is logged once
+        self.assertEqual(rows[0]["event"], "push_failed")
+        self.assertEqual(rows[0]["level"], "error")
+        self.assertNotIn("SUPERSECRETKEY123", json.dumps(rows))
+        self.assertTrue(self.db.get_setting("cloud_last_error"))
+
+    def test_partial_push_and_failed_order_are_logged(self):
+        import cloud_sync, supabase_client
+
+        class Half:
+            def fetch_catalog_keys(self): return {}
+            def upsert_products(self, rows): raise supabase_client.SupabaseError("HTTP 500")
+        orig = cloud_sync._client
+        cloud_sync._client = lambda: Half()
+        try:
+            sent, failed = cloud_sync.push_all(self.db)
+        finally:
+            cloud_sync._client = orig
+        self.assertEqual(sent, 0); self.assertGreaterEqual(failed, 1)
+        ev = {r["event"] for r in self.db.system_log_query(component="cloud_sync")}
+        self.assertIn("push_all_partial", ev)
+        self.assertTrue(self.db.get_setting("cloud_last_error"))
 
 
 if __name__ == "__main__":
