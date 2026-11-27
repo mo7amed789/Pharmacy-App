@@ -28,6 +28,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import sys
 import threading
 from datetime import date, datetime, timedelta
 
@@ -432,7 +433,9 @@ class DB:
         connection only (PRAGMAs, no schema/migration/seed work);
         use ONLY after DB.ensure_initialized(path) has run once in
         this process, e.g. the mobile server's per-request _db()."""
-        base = os.path.dirname(os.path.abspath(__file__))
+        base = (os.path.dirname(os.path.abspath(sys.executable))
+                if getattr(sys, "frozen", False)
+                else os.path.dirname(os.path.abspath(__file__)))
         self.path = path or os.path.join(base, DB_NAME)
         # v5.0: 15s busy timeout + WAL so the PC app and the mobile
         # server (different connections) stop raising "database is locked"
@@ -472,7 +475,9 @@ class DB:
         set lookup (~microseconds). Raises if the init itself fails,
         so a broken DB fails loudly at startup instead of serving
         half-initialised requests."""
-        base = os.path.dirname(os.path.abspath(__file__))
+        base = (os.path.dirname(os.path.abspath(sys.executable))
+                if getattr(sys, "frozen", False)
+                else os.path.dirname(os.path.abspath(__file__)))
         resolved = os.path.abspath(path or os.path.join(base, DB_NAME))
         with cls._INIT_LOCK:
             if resolved in cls._INIT_DONE:

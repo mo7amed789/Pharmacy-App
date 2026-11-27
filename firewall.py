@@ -72,9 +72,12 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = (os.path.dirname(os.path.abspath(sys.executable))
+        if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.abspath(__file__)))
 LOG_PATH = os.path.join(BASE, "firewall.log")
 
 # Canonical rule names used when ADDING a rule, per port/profile.

@@ -53,12 +53,15 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import traceback
 from datetime import datetime
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-PS1_PATH = os.path.join(BASE, "hotspot.ps1")
+BASE = (os.path.dirname(os.path.abspath(sys.executable))
+        if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.abspath(__file__)))
+PS1_PATH = os.path.join(getattr(sys, "_MEIPASS", BASE), "hotspot.ps1")
 LOG_PATH = os.path.join(BASE, "hotspot.log")
 
 def pc_hostname():

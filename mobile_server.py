@@ -64,6 +64,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -72,7 +73,10 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 from database import DB, unit_price, units_per_box, allowed_units
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = (os.path.dirname(os.path.abspath(sys.executable))
+        if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.abspath(__file__)))
+ASSET_BASE = getattr(sys, "_MEIPASS", BASE)
 DEFAULT_PORT = 8080
 HTTPS_PORT = 8443
 # v6.2 (audit step 4A): certs live in certs/ now. CERT_FILE/KEY_FILE
@@ -1226,7 +1230,7 @@ def _make_handler(db_path, req_log=None):
             """Serve the vendored ZXing JS bundle (v4.9) — one exact
             file only, application/javascript. The phone loads it
             from the PC server, never from a CDN."""
-            js_path = os.path.join(BASE, "zxing.min.js")
+            js_path = os.path.join(ASSET_BASE, "zxing.min.js")
             try:
                 with open(js_path, "rb") as f:
                     body = f.read()
@@ -1261,7 +1265,7 @@ def _make_handler(db_path, req_log=None):
             if filename not in allowed:
                 self._send_json(404, {"error": "غير موجود"})
                 return
-            fpath = os.path.join(BASE, filename)
+            fpath = os.path.join(ASSET_BASE, filename)
             try:
                 with open(fpath, "rb") as f:
                     body = f.read()
@@ -1290,7 +1294,7 @@ def _make_handler(db_path, req_log=None):
             self.wfile.write(body)
 
         def _serve_landing(self):
-            html_path = os.path.join(BASE, "mobile.html")
+            html_path = os.path.join(ASSET_BASE, "mobile.html")
             try:
                 with open(html_path, "rb") as f:
                     body = f.read()

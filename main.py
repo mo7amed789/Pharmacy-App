@@ -172,7 +172,9 @@ def qr_url_with_pin(url, pin):
         return base + "#pin=" + value
     return base
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = (os.path.dirname(os.path.abspath(sys.executable))
+        if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.abspath(__file__)))
 EGP = "ج.م"
 
 
@@ -6607,18 +6609,45 @@ class App:
         messagebox.showinfo("تم", "تم تصدير %d سطر" % n)
 
     def _install_error_logging(self):
-        """Uncaught errors in any button / callback go to the system log (the
-        console traceback stays too). Passwords and keys are redacted."""
+        """Uncaught errors in any button / callback go to syslog, error.log,
+        and a clear user-facing error dialog (with re-entrancy guard)."""
         import traceback as _tb
+        from database import redact_text
         app = self
+        app._in_error_dialog = False
 
         def handler(exc, val, tb):
+            raw_tb = "".join(_tb.format_exception(exc, val, tb))
+            safe_tb = redact_text(raw_tb, 4000)
+            err_msg = redact_text("%s: %s" % (exc.__name__, val), 400)
             try:
-                app.db.syslog("error", "desktop", "ui_exception", "%s: %s" % (exc.__name__, val),
-                              "".join(_tb.format_exception(exc, val, tb))[-3000:])
+                app.db.syslog("error", "desktop", "ui_exception", err_msg, safe_tb[-3000:])
+            except Exception:
+                pass
+            try:
+                with open(os.path.join(BASE, "error.log"), "a", encoding="utf-8") as f:
+                    f.write("\n[%s] %s\n%s\n" % (
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"), err_msg, safe_tb))
             except Exception:
                 pass
             _tb.print_exception(exc, val, tb)
+            if getattr(app, "_in_error_dialog", False):
+                return
+            app._in_error_dialog = True
+            try:
+                ui_dialogs.showerror(
+                    "حدث خطأ غير متوقع",
+                    "تعذّر إكمال العملية الحالية بسبب خطأ غير متوقع.\n\n"
+                    "الخطأ: %s\n\n"
+                    "تم حفظ التفاصيل في ملف error.log بجانب البرنامج.\n"
+                    "يمكنك متابعة العمل أو إعادة المحاولة." % err_msg,
+                    parent=app.root,
+                )
+            except Exception:
+                pass
+            finally:
+                app._in_error_dialog = False
+
         self.root.report_callback_exception = handler
 
     def audit_refresh(self):
@@ -6715,6 +6744,38 @@ def _enable_dpi_awareness():
         pass
 
 
+def _show_fatal_error(title, summary, detail=""):
+    """Show a clear GUI error box even when running as a windowed .exe (no console)."""
+    try:
+        from database import redact_text
+        safe_detail = redact_text(detail, 1200) if detail else ""
+    except Exception:
+        safe_detail = str(detail or "")[:1200]
+    msg = summary
+    if safe_detail:
+        msg += "\n\nالتفاصيل:\n" + safe_detail
+    msg += "\n\nتم حفظ سجل الخطأ في:\n" + os.path.join(BASE, "error.log")
+    try:
+        from tkinter import messagebox as _sys_mb
+        r = tk._default_root
+        created = False
+        if r is None:
+            r = tk.Tk()
+            r.withdraw()
+            created = True
+        _sys_mb.showerror(title, msg, parent=r)
+        if created:
+            r.destroy()
+        return
+    except Exception:
+        pass
+    try:
+        print(title + ": " + msg)
+        input("اضغط Enter للخروج...")
+    except Exception:
+        pass
+
+
 def main():
     # v6.21: tell Windows this process is per-monitor DPI aware BEFORE
     # any Tk window exists — without it Windows bitmap-stretches the
@@ -6723,7 +6784,7 @@ def main():
     _enable_dpi_awareness()
     try:
         db = DB()
-    except Exception:
+    except Exception as exc:
         # v5.0: corrupt DB is no longer total loss — restore the newest
         # verified backup automatically and try again.
         restored = _try_restore_latest_backup()
@@ -6734,21 +6795,21 @@ def main():
             except Exception:
                 db = None
         if db is None:
-            # Entry-point safety: never close instantly with no message.
+            import traceback
+            tb_txt = traceback.format_exc()
             try:
-                import traceback
                 with open(os.path.join(BASE, "error.log"), "w", encoding="utf-8") as f:
-                    traceback.print_exc(file=f)
+                    f.write(tb_txt)
             except Exception:
                 pass
             _startup_log("database open FAILED (restored=%s)" % restored)
-            print("ERROR starting database: could not open pharmacy.db"
-                  + (" (a backup was restored but still failed)" if restored
-                     else " and no verified backup was available"))
-            try:
-                input("حدث خطأ أثناء تشغيل قاعدة البيانات. اضغط Enter للخروج...")
-            except Exception:
-                pass
+            _show_fatal_error(
+                "خطأ في قاعدة البيانات",
+                "تعذّر فتح قاعدة البيانات pharmacy.db"
+                + (" (تمت استعادة نسخة احتياطية لكنها لم تعمل)." if restored
+                   else " ولا توجد نسخة احتياطية سليمة."),
+                "%s: %s" % (type(exc).__name__, exc),
+            )
             return
         else:
             print("NOTICE: pharmacy.db was corrupt — restored the newest verified backup.")
@@ -6822,19 +6883,21 @@ def main():
             _startup_log("main window show error: %r" % (e,))
         root.after(1000, _ensure_main_visible)
         root.mainloop()
-    except Exception:
+    except Exception as exc:
         import traceback
+        tb_txt = traceback.format_exc()
         traceback.print_exc()
         _startup_log("FATAL exception — see error.log")
         try:
             with open(os.path.join(BASE, "error.log"), "w", encoding="utf-8") as f:
-                traceback.print_exc(file=f)
+                f.write(tb_txt)
         except Exception:
             pass
-        try:
-            input("حدث خطأ. راجع ملف error.log ثم اضغط Enter للخروج...")
-        except Exception:
-            pass
+        _show_fatal_error(
+            "خطأ غير متوقع أثناء التشغيل",
+            "توقف البرنامج بسبب خطأ غير متوقع.",
+            "%s: %s" % (type(exc).__name__, exc),
+        )
     finally:
         try:
             db.close()
