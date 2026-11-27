@@ -1,61 +1,90 @@
 # -*- coding: utf-8 -*-
-"""Tk review dialog for supplier-invoice photo intake. Draft only."""
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+"""Fluent Qt review dialog for supplier-invoice photo intake. Draft only."""
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QListWidget, QVBoxLayout
+from qfluentwidgets import (
+    BodyLabel,
+    CheckBox,
+    PrimaryPushButton,
+    PushButton,
+    SearchLineEdit,
+    TableWidget,
+)
 
 import invoice_intake as ii
+import ui_dialogs as messagebox
 import ui_theme
 
 
 def open_invoice_intake(app):
     if not getattr(app, "is_admin", False):
-        messagebox.showerror("صلاحيات", "هذه الصفحة للمدير فقط", parent=app.root)
+        messagebox.showerror("صلاحيات", "هذه الصفحة للمدير فقط", parent=app)
         return
-    """app = the main window object (needs .root, .db, .purchase_lines,
-    .pur_refresh_table, .e_pur_inv, .username). Nothing is saved here."""
-    path = filedialog.askopenfilename(
-        parent=app.root, title="اختر صورة فاتورة المورد",
-        filetypes=[("صور", "*.png *.jpg *.jpeg *.bmp *.tif *.tiff"), ("كل الملفات", "*.*")])
+    path = messagebox.get_open_filename(
+        parent=app,
+        title="اختر صورة فاتورة المورد",
+        filetypes=[("صور", "*.png *.jpg *.jpeg *.bmp *.tif *.tiff"), ("كل الملفات", "*.*")],
+    )
     if not path:
         return
     try:
-        app.root.config(cursor="watch")
-        app.root.update_idletasks()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         text = ii.ocr_image(path)
     except ii.OcrUnavailable as e:
-        messagebox.showerror("قراءة الفاتورة", str(e), parent=app.root)
+        messagebox.showerror("قراءة الفاتورة", str(e), parent=app)
         return
     finally:
-        app.root.config(cursor="")
+        QApplication.restoreOverrideCursor()
+
     parsed = ii.annotate(app.db, ii.parse_invoice_text(text))
     if ii.known_invoice(app.db, parsed.get("invoice_no")):
         if not messagebox.askyesno(
-                "فاتورة مكررة؟", "رقم الفاتورة %s مسجل من قبل في المشتريات. قد تكون نفس الفاتورة. هل تكمل؟" % parsed["invoice_no"],
-                parent=app.root):
+            "فاتورة مكررة؟",
+            "رقم الفاتورة %s مسجل من قبل في المشتريات. قد تكون نفس الفاتورة. هل تكمل؟" % parsed["invoice_no"],
+            parent=app,
+        ):
             return
     if not parsed["lines"]:
-        messagebox.showinfo("قراءة الفاتورة",
-                            "لم أتعرف على أي سطور. جرّب صورة أوضح ومستقيمة وبإضاءة جيدة.",
-                            parent=app.root)
+        messagebox.showinfo(
+            "قراءة الفاتورة",
+            "لم أتعرف على أي سطور. جرّب صورة أوضح ومستقيمة وبإضاءة جيدة.",
+            parent=app,
+        )
         return
     _review(app, parsed)
 
 
 def _review(app, parsed):
-    win = tk.Toplevel(app.root)
-    win.title("مراجعة فاتورة المورد (لن يتم حفظ شيء قبل ضغطك على حفظ)")
-    ui_theme.fit_dialog(win, 1100, 520)
-    ttk.Label(win, text="راجع كل سطر. الصنف المقترح لا يُعتمد إلا بعد تأكيدك (زر تأكيد الصنف). الصلاحية لازم تاريخ كامل. لا يتم تخمين أي رقم.",
-              wraplength=900).pack(anchor="w", padx=10, pady=6)
-    cols = ("status", "name", "drug", "qty", "price", "exp", "batch")
-    tv = ttk.Treeview(win, columns=cols, show="headings", height=14)
-    for c, t, w in zip(cols, ("الحالة", "كما في الفاتورة", "الصنف في البرنامج", "علب", "سعر العلبة (يُؤكَّد)", "الصلاحية", "التشغيلة"),
-                       (320, 200, 200, 50, 80, 105, 80)):
-        tv.heading(c, text=t)
-        tv.column(c, width=w)
-    tv.tag_configure("bad", foreground="#ffe3de", background="#7a1f1f")
-    tv.tag_configure("ok", foreground="#e3ffe8", background="#1f5a2a")
+    win = QDialog(app)
+    win.setWindowTitle("مراجعة فاتورة المورد (لن يتم حفظ شيء قبل ضغطك على حفظ)")
+    win.setLayoutDirection(Qt.RightToLeft)
+    win.setStyleSheet(ui_theme.window_qss())
+    ui_theme.fit_dialog_widget(win, 1100, 560)
+
+    lay = QVBoxLayout(win)
+    lay.setContentsMargins(16, 14, 16, 14)
+    lay.setSpacing(8)
+
+    note = BodyLabel(
+        "راجع كل سطر. الصنف المقترح لا يُعتمد إلا بعد تأكيدك (زر تأكيد الصنف). "
+        "الصلاحية لازم تاريخ كامل. لا يتم تخمين أي رقم."
+    )
+    note.setWordWrap(True)
+    lay.addWidget(note)
+
+    tv = TableWidget()
+    ui_theme.configure_table(
+        tv,
+        ("الحالة", "كما في الفاتورة", "الصنف في البرنامج", "علب", "سعر العلبة (يُؤكَّد)", "الصلاحية", "التشغيلة"),
+        (290, 195, 195, 60, 110, 110, 90),
+        stretch_cols=(0,),
+        min_height=260,
+    )
+    lay.addWidget(tv, 1)
+
     lines = parsed["lines"]
+    p = ui_theme.palette()
 
     def status(ln):
         miss = []
@@ -72,19 +101,33 @@ def _review(app, parsed):
         return miss
 
     def refresh():
-        tv.delete(*tv.get_children())
-        for i, ln in enumerate(lines):
+        rows = []
+        styles = []
+        for ln in lines:
             miss = status(ln)
             warn = [f for f in ln["flags"] if f not in ("التشغيلة غير مقروءة",) and "اقتراح" not in f or "تحذير" in f]
             st = ("ناقص: " + "، ".join(miss)) if miss else ("✔ جاهز" + (" (راجع: %s)" % warn[0] if warn else ""))
-            tv.insert("", "end", iid=str(i), tags=("bad" if miss or warn else "ok",), values=(
-                st, ln["name"], ln["drug"]["trade_en"] if ln.get("drug") else ("؟ " + ln["suggestion"]["trade_en"] if ln.get("suggestion") else "—"),
-                "" if ln.get("qty") is None else int(ln["qty"]) if ln["qty"] == int(ln["qty"]) else ln["qty"],
-                "" if ln.get("price") is None else ln["price"], ln.get("expiry") or "", ln.get("batch") or ""))
+            drug_col = (
+                ln["drug"]["trade_en"]
+                if ln.get("drug")
+                else ("؟ " + ln["suggestion"]["trade_en"] if ln.get("suggestion") else "—")
+            )
+            qty_col = "" if ln.get("qty") is None else (int(ln["qty"]) if ln["qty"] == int(ln["qty"]) else ln["qty"])
+            rows.append((
+                st,
+                ln["name"],
+                drug_col,
+                qty_col,
+                "" if ln.get("price") is None else ln["price"],
+                ln.get("expiry") or "",
+                ln.get("batch") or "",
+            ))
+            styles.append((p["danger"], p["danger_bg"]) if (miss or warn) else (p["success"], p["success_bg"]))
+        ui_theme.set_table_rows(tv, rows, styles)
 
     def sel():
-        s = tv.selection()
-        return lines[int(s[0])] if s else None
+        idx = ui_theme.selected_row_index(tv)
+        return lines[idx] if idx is not None and 0 <= idx < len(lines) else None
 
     def confirm_suggestion():
         ln = sel()
@@ -92,8 +135,12 @@ def _review(app, parsed):
             messagebox.showinfo("تأكيد", "لا يوجد اقتراح لهذا السطر. استخدم اختيار الصنف.", parent=win)
             return
         sg = ln["suggestion"]
-        if messagebox.askyesno("تأكيد الصنف", "في الفاتورة:\n%s\n\nفي البرنامج:\n%s  %s\n\nهل هما نفس الدواء والتركيز والعبوة؟" % (
-                ln["name"], sg["trade_en"], sg["strength"] or ""), parent=win):
+        if messagebox.askyesno(
+            "تأكيد الصنف",
+            "في الفاتورة:\n%s\n\nفي البرنامج:\n%s  %s\n\nهل هما نفس الدواء والتركيز والعبوة؟"
+            % (ln["name"], sg["trade_en"], sg["strength"] or ""),
+            parent=win,
+        ):
             ln["drug"] = sg
             refresh()
 
@@ -105,7 +152,11 @@ def _review(app, parsed):
         import calendar
         y, m = [int(x) for x in ln["expiry_month"].split("-")]
         last = "%04d-%02d-%02d" % (y, m, calendar.monthrange(y, m)[1])
-        if messagebox.askyesno("الصلاحية", "الفاتورة تحمل %s فقط. هل تعتمد آخر يوم في الشهر (%s)؟" % (ln["expiry_month"], last), parent=win):
+        if messagebox.askyesno(
+            "الصلاحية",
+            "الفاتورة تحمل %s فقط. هل تعتمد آخر يوم في الشهر (%s)؟" % (ln["expiry_month"], last),
+            parent=win,
+        ):
             ln["expiry"] = last
             refresh()
 
@@ -113,39 +164,57 @@ def _review(app, parsed):
         ln = sel()
         if not ln:
             return
-        d = tk.Toplevel(win)
-        d.title("اختر الصنف")
-        ui_theme.fit_dialog(d, 520, 420)
-        e = ttk.Entry(d, width=40)
-        e.pack(padx=8, pady=6)
-        e.insert(0, ln["name"])
-        lb = tk.Listbox(d, height=14)
-        lb.pack(fill="both", expand=True, padx=8)
+        d = QDialog(win)
+        d.setWindowTitle("اختر الصنف")
+        d.setLayoutDirection(Qt.RightToLeft)
+        d.setStyleSheet(ui_theme.window_qss())
+        ui_theme.fit_dialog_widget(d, 520, 420)
+        dl = QVBoxLayout(d)
+        dl.setContentsMargins(14, 12, 14, 12)
+        dl.setSpacing(8)
+        e = SearchLineEdit()
+        e.setText(ln["name"])
+        dl.addWidget(e)
+        lb = QListWidget()
+        dl.addWidget(lb, 1)
         res = []
 
-        def search(*_):
-            res[:] = app.db.search_drugs(e.get(), limit=40)
-            lb.delete(0, "end")
+        def search(_txt=""):
+            res[:] = app.db.search_drugs(e.text(), limit=40)
+            lb.clear()
             for r in res:
-                lb.insert("end", "%s  %s" % (r["trade_en"], r["strength"] or ""))
+                lb.addItem("%s  %s" % (r["trade_en"], r["strength"] or ""))
 
         def choose(*_):
-            if lb.curselection():
-                ln["drug"] = res[lb.curselection()[0]]  # explicit user pick
-                d.destroy()
+            row = lb.currentRow()
+            if 0 <= row < len(res):
+                ln["drug"] = res[row]
+                d.accept()
                 refresh()
-        e.bind("<KeyRelease>", search)
-        lb.bind("<Double-Button-1>", choose)
-        ttk.Button(d, text="اختيار", command=choose).pack(pady=6)
+
+        e.textChanged.connect(search)
+        lb.itemDoubleClicked.connect(choose)
+        btn = PrimaryPushButton("اختيار")
+        btn.clicked.connect(choose)
+        dl.addWidget(btn)
         search()
+        d.exec()
 
     def edit():
         ln = sel()
         if not ln:
             return
-        for key, label, conv in (("qty", "عدد العلب", float), ("price", "سعر شراء العلبة", float),
-                                 ("expiry", "الصلاحية YYYY-MM-DD", str), ("batch", "رقم التشغيلة", str)):
-            v = simpledialog.askstring("تعديل", label, initialvalue="" if ln.get(key) is None else str(ln[key]), parent=win)
+        for key, label, conv in (
+            ("qty", "عدد العلب", float),
+            ("price", "سعر شراء العلبة", float),
+            ("expiry", "الصلاحية YYYY-MM-DD", str),
+            ("batch", "رقم التشغيلة", str),
+        ):
+            v = messagebox.askstring(
+                "تعديل", label,
+                initialvalue="" if ln.get(key) is None else str(ln[key]),
+                parent=win,
+            )
             if v is None:
                 refresh()
                 return
@@ -156,7 +225,7 @@ def _review(app, parsed):
                 messagebox.showerror("خطأ", "قيمة غير صالحة: " + label, parent=win)
                 break
         else:
-            ln["numbers_confirmed"] = True  # user went through every number
+            ln["numbers_confirmed"] = True
         refresh()
 
     def drop():
@@ -165,44 +234,66 @@ def _review(app, parsed):
             lines.remove(ln)
             refresh()
 
-    basis = tk.BooleanVar(value=False)
+    basis = CheckBox(
+        "أؤكد: السعر = سعر شراء العلبة الواحدة (وليس القطعة/الشريط ولا الإجمالي)، "
+        "بعد الخصم وبنفس طريقة الضريبة التي أسجل بها التكلفة. سيتحدث سعر تكلفة الصنف بهذا الرقم."
+    )
+    lay.addWidget(basis)
 
     def add_ready():
-        if not basis.get():
+        if not basis.isChecked():
             messagebox.showwarning(
-                "أساس السعر", "أكّد أولا أن السعر في الفاتورة هو سعر شراء العلبة الواحدة الذي تريد تسجيله كتكلفة "
-                "(بعد الخصم وبالضريبة كما تحاسب بها). حدد خانة التأكيد أسفل الجدول.", parent=win)
+                "أساس السعر",
+                "أكّد أولا أن السعر في الفاتورة هو سعر شراء العلبة الواحدة الذي تريد تسجيله كتكلفة "
+                "(بعد الخصم وبالضريبة كما تحاسب بها). حدد خانة التأكيد أسفل الجدول.",
+                parent=win,
+            )
             return
         ready, left = ii.to_purchase_lines(lines, app.purchase_lines)
         if not ready:
             messagebox.showinfo("مراجعة", "لا يوجد سطر جاهز بعد.", parent=win)
             return
         if left and not messagebox.askyesno(
-                "أسطر ناقصة", "يوجد %d سطر ناقص لن يُضاف. أضيف %d سطر الجاهز فقط كمسودة؟" % (len(left), len(ready)), parent=win):
+            "أسطر ناقصة",
+            "يوجد %d سطر ناقص لن يُضاف. أضيف %d سطر الجاهز فقط كمسودة؟" % (len(left), len(ready)),
+            parent=win,
+        ):
             return
         app.purchase_lines.extend(ready)
-        if parsed.get("invoice_no") and hasattr(app, "e_pur_inv") and not app.e_pur_inv.get().strip():
-            app.e_pur_inv.insert(0, parsed["invoice_no"])
+        if parsed.get("invoice_no") and hasattr(app, "e_pur_inv") and not app.e_pur_inv.text().strip():
+            app.e_pur_inv.setText(parsed["invoice_no"])
         app.pur_refresh_table()
         try:
             app.db.audit(app.username, "invoice_photo_draft", "%d lines drafted from invoice photo" % len(ready))
         except Exception:
             pass
-        win.destroy()
-        messagebox.showinfo("تم", "أُضيف %d سطر كمسودة. راجع المورد والمدفوع ثم اضغط «حفظ فاتورة الشراء»." % len(ready),
-                            parent=app.root)
+        win.accept()
+        messagebox.showinfo(
+            "تم",
+            "أُضيف %d سطر كمسودة. راجع المورد والمدفوع ثم اضغط «حفظ فاتورة الشراء»." % len(ready),
+            parent=app,
+        )
 
-    tk.Checkbutton(win, variable=basis, justify="right", anchor="w", text="أؤكد: السعر = سعر شراء العلبة الواحدة (وليس القطعة/الشريط ولا الإجمالي)، "
-                    "بعد الخصم وبنفس طريقة الضريبة التي أسجل بها التكلفة. سيتحدث سعر تكلفة الصنف بهذا الرقم.",
-                    wraplength=1000).pack(side="bottom", anchor="w", padx=10, pady=(6, 0))
-    bar = ttk.Frame(win)
-    bar.pack(side="bottom", fill="x", padx=8, pady=8)
-    ttk.Button(bar, text="تأكيد الصنف المقترح", command=confirm_suggestion).pack(side="left", padx=3)
-    ttk.Button(bar, text="آخر يوم في الشهر", command=month_end).pack(side="left", padx=3)
-    ttk.Button(bar, text="اختيار الصنف", command=pick_drug).pack(side="left", padx=3)
-    ttk.Button(bar, text="تعديل الأرقام", command=edit).pack(side="left", padx=3)
-    ttk.Button(bar, text="حذف السطر", command=drop).pack(side="left", padx=3)
-    ttk.Button(bar, text="➕ إضافة الجاهز كمسودة شراء", command=add_ready).pack(side="right", padx=3)
-    ttk.Button(bar, text="إلغاء", command=win.destroy).pack(side="right", padx=3)
-    tv.pack(fill="both", expand=True, padx=8)
+    bar = QHBoxLayout()
+    bar.setSpacing(6)
+    for label, fn in (
+        ("تأكيد الصنف المقترح", confirm_suggestion),
+        ("آخر يوم في الشهر", month_end),
+        ("اختيار الصنف", pick_drug),
+        ("تعديل الأرقام", edit),
+        ("حذف السطر", drop),
+    ):
+        b = PushButton(label)
+        b.clicked.connect(fn)
+        bar.addWidget(b)
+    bar.addStretch(1)
+    b_add = PrimaryPushButton("➕ إضافة الجاهز كمسودة شراء")
+    b_add.clicked.connect(add_ready)
+    b_cancel = PushButton("إلغاء")
+    b_cancel.clicked.connect(win.reject)
+    bar.addWidget(b_add)
+    bar.addWidget(b_cancel)
+    lay.addLayout(bar)
+
     refresh()
+    win.exec()

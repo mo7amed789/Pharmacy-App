@@ -1,39 +1,50 @@
 # -*- coding: utf-8 -*-
 """
-Pharmacy Enterprise v6.20 — UI theme module (stdlib only: Tkinter/ttk).
+Pharmacy Enterprise — Windows 11 Fluent Design Theme Module (PySide6 + PySide6-Fluent-Widgets).
 
-One place for the whole look: colours, fonts, card/banner helpers and
-Treeview striping.  Business logic, database and forecasting are NOT
-here — this file only changes how things look.
-
-v6.15 «futuristic» refresh: a deeper night-drive dark palette (the new
-default), a cleaner modern light palette, cyan/violet accent family,
-flatter buttons, roomier tabs and table rows, themed scrollbars, and
-themed tk Text/Listbox defaults so every surface matches the palette.
-
-v6.18 polish: a single button hierarchy (primary/success/danger/warning/
-secondary) with hover and pressed states on every variant, one status
-colour language (success/warning/danger/info/muted) with a pill label
-helper and Treeview status tags, and helpers so no screen hardcodes its
-own hex colours anymore.
-
-Windows fonts first (Segoe UI Variable on Windows 11, then Segoe UI),
-with Tahoma / DejaVu Sans as fallbacks so the same file also renders on
-Linux during smoke tests.
+Preserves palette/status/preference contracts stored in pharmacy.db while rendering
+native Windows 11 Fluent UI (Mica backdrop, NavigationView, SmoothScrollArea,
+CardWidget, TableWidget, InfoBar, crisp RTL typography).
 """
-import tkinter as tk
-from tkinter import ttk
+import os
+import re
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QBrush
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QAbstractItemView,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+import qfluentwidgets as qfw
+from qfluentwidgets import (
+    CardWidget,
+    CaptionLabel,
+    BodyLabel,
+    StrongBodyLabel,
+    SmoothScrollArea,
+    TableWidget,
+    Theme,
+    setTheme,
+    setThemeColor,
+)
 
 FONT_FAMILY = "Segoe UI"
-# v6.20: Windows 11 ships "Segoe UI Variable" — a modernised cut of the
-# same face.  resolve_font_family() picks the best installed option at
-# startup and keeps the module-level default as the safe fallback.
-FONT_FAMILIES_PREFERRED = ("Segoe UI Variable Text", "Segoe UI",
-                           "Tahoma", "DejaVu Sans")
+FONT_FAMILIES_PREFERRED = (
+    "Segoe UI Variable Text",
+    "Segoe UI Variable",
+    "Segoe UI",
+    "Tahoma",
+    "DejaVu Sans",
+)
 _resolved_family = None
 
-# v6.20: one Fluent-style type scale — every label size comes from here
-# so the hierarchy (caption/body/subtitle/title/display) stays coherent.
 TYPE_SCALE = {
     "caption": 9,
     "body": 11,
@@ -43,55 +54,17 @@ TYPE_SCALE = {
     "display": 28,
 }
 
-
-def resolve_font_family(root=None):
-    """Pick the best installed family from FONT_FAMILIES_PREFERRED.
-
-    Safe everywhere: any failure keeps the plain Segoe UI default.
-    """
-    global FONT_FAMILY, _resolved_family
-    if _resolved_family:
-        return _resolved_family
-    fam = FONT_FAMILY
-    try:
-        from tkinter import font as tkfont
-        available = set(tkfont.families(root))
-        for cand in FONT_FAMILIES_PREFERRED:
-            if cand in available:
-                fam = cand
-                break
-    except Exception:
-        fam = FONT_FAMILY
-    FONT_FAMILY = fam
-    _resolved_family = fam
-    return fam
-# v5.9: font-size scale (0=normal, 2=large, 4=extra large) added to every font().
 FONT_DELTA = 0
 FONT_SCALES = {"normal": 0, "large": 2, "xlarge": 4}
 FONT_SCALE_LABELS = {"normal": "عادي", "large": "كبير", "xlarge": "كبير جداً"}
+
 ACCENTS = {
     "teal":   {"label": "سماوي (افتراضي)", "accent": "#0D9488", "hover": "#14B8A6", "header": "#0B3B39", "header2": "#082B2A"},
-    "blue":   {"label": "أزرق كهربائي", "accent": "#3B82F6", "hover": "#60A5FA", "header": "#1E3A8A", "header2": "#172554"},
-    "green":  {"label": "زمردي", "accent": "#10B981", "hover": "#34D399", "header": "#064E3B", "header2": "#022C22"},
-    "violet": {"label": "بنفسجي", "accent": "#8B5CF6", "hover": "#A78BFA", "header": "#4C1D95", "header2": "#2E1065"},
+    "blue":   {"label": "أزرق كهربائي",    "accent": "#3B82F6", "hover": "#60A5FA", "header": "#1E3A8A", "header2": "#172554"},
+    "green":  {"label": "زمردي",            "accent": "#10B981", "hover": "#34D399", "header": "#064E3B", "header2": "#022C22"},
+    "violet": {"label": "بنفسجي",           "accent": "#8B5CF6", "hover": "#A78BFA", "header": "#4C1D95", "header2": "#2E1065"},
 }
-def set_font_scale(delta):
-    global FONT_DELTA
-    try: FONT_DELTA = int(delta)
-    except Exception: FONT_DELTA = 0
-def font_scale_for(name):
-    return FONT_SCALES.get(str(name or "normal"), 0)
 
-
-def font(size=11, bold=False, family=None):
-    """Return a font tuple.  ``family`` falls back gracefully on Linux."""
-    return (family or FONT_FAMILY, size + FONT_DELTA, "bold" if bold else "normal")
-
-
-# v6.20 palettes move to the Windows 11 Fluent neutrals: a light mica
-# grey (#F3F3F3) and the Win11 dark charcoal (#202020) with layered
-# card surfaces and subtle 1px borders.  Status colours are unchanged —
-# the v6.18 colour language stays exactly as users learned it.
 LIGHT = {
     "name": "light",
     "bg": "#F3F3F3",
@@ -146,45 +119,15 @@ DARK = {
 
 PALETTES = {"light": LIGHT, "dark": DARK}
 
-
-def _shade(hex_color, factor):
-    """Lighten (factor > 1) or darken (0 < factor < 1) a #RRGGBB colour."""
-    try:
-        h = str(hex_color).lstrip("#")
-        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
-        if factor >= 1:
-            f = min(factor - 1.0, 1.0)
-            r = int(r + (255 - r) * f)
-            g = int(g + (255 - g) * f)
-            b = int(b + (255 - b) * f)
-        else:
-            r = int(r * factor)
-            g = int(g * factor)
-            b = int(b * factor)
-        return "#%02X%02X%02X" % (max(0, min(255, r)),
-                                  max(0, min(255, g)),
-                                  max(0, min(255, b)))
-    except Exception:
-        return hex_color
-
-
-# ---------------------------------------------------------------- status language
-# v6.18: one coherent colour language for every state the app shows —
-# success (paid/synced/done), warning (due soon/partial), danger (failed/
-# void/critical), info (running/pending), muted (held/disabled).
 STATUS_KINDS = ("success", "warning", "danger", "info", "muted")
 
-# Arabic/domain status word → kind.  status_kind_for() matches the first
-# word found inside any status text, so every screen paints the same
-# state in the same colour.
 STATUS_WORDS = {
     # invoices / payments
     "مدفوعة": "success", "مدفوع": "success", "نقدي": "success",
     "آجلة": "warning", "آجل": "warning", "جزئي": "warning",
     "متأخرة": "danger", "مُرجعة": "danger", "مرتجع": "danger",
     "ملغاة": "danger", "ملغية": "danger",
-    # sync / background tasks  (negative phrases first — they contain
-    # the positive words as substrings, and the first match wins)
+    # sync / background tasks (negative phrases first)
     "غير مفعّلة": "warning", "غير متاحة": "danger",
     "متزامنة": "success", "ناجحة": "success",
     "يعمل": "success", "مفعّلة": "success",
@@ -198,22 +141,75 @@ STATUS_WORDS = {
     "محذوف مؤقتاً": "muted", "معلَّق": "muted",
 }
 
+_LAST_THEME = "dark"
+_LAST_ACCENT = "teal"
+_GEOMETRY_RE = re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
+
+
+def resolve_font_family():
+    """Pick the best installed Fluent font family."""
+    global FONT_FAMILY, _resolved_family
+    if _resolved_family:
+        return _resolved_family
+    fam = FONT_FAMILY
+    try:
+        available = set(QFontDatabase.families())
+        for cand in FONT_FAMILIES_PREFERRED:
+            if cand in available:
+                fam = cand
+                break
+    except Exception:
+        fam = FONT_FAMILY
+    FONT_FAMILY = fam
+    _resolved_family = fam
+    return fam
+
+
+def set_font_scale(delta):
+    global FONT_DELTA
+    try:
+        FONT_DELTA = int(delta)
+    except Exception:
+        FONT_DELTA = 0
+
+
+def font_scale_for(name):
+    return FONT_SCALES.get(str(name or "normal"), 0)
+
+
+def qfont(size=10, bold=False, family=None):
+    """Return a configured QFont honoring current FONT_DELTA."""
+    f = QFont(family or resolve_font_family(), max(8, int(size) + FONT_DELTA))
+    if bold:
+        f.setBold(True)
+    return f
+
+
+def palette(theme_name=None, accent=None):
+    t = theme_name or _LAST_THEME
+    a_key = accent or _LAST_ACCENT
+    base = dict(PALETTES.get(t, LIGHT))
+    a = ACCENTS.get(str(a_key or "teal"), ACCENTS["teal"])
+    base["accent"] = a["accent"]
+    base["accent_hover"] = a["hover"]
+    base["header_bg"] = a["header"]
+    base["header_bg2"] = a["header2"]
+    return base
+
 
 def status_colors(kind, theme_name="light", accent="teal"):
-    """(foreground, background) pair for a status kind."""
     p = palette(theme_name, accent)
     table = {
         "success": (p["success"], p["success_bg"]),
         "warning": (p["warning"], p["warning_bg"]),
-        "danger": (p["danger"], p["danger_bg"]),
-        "info": (p["info"], p["info_bg"]),
-        "muted": (p["muted"], p["row_alt"]),
+        "danger":  (p["danger"],  p["danger_bg"]),
+        "info":    (p["info"],    p["info_bg"]),
+        "muted":   (p["muted"],   p["row_alt"]),
     }
     return table.get(str(kind or "info"), table["info"])
 
 
 def status_kind_for(text):
-    """Best status kind for an Arabic status text (info when unknown)."""
     t = str(text or "")
     for word, kind in STATUS_WORDS.items():
         if word in t:
@@ -221,55 +217,23 @@ def status_kind_for(text):
     return "info"
 
 
-# ---------------------------------------------------------------- buttons
-# v6.18 hierarchy, one meaning per colour everywhere:
-#   primary/Accent  → الخطوة الرئيسية (دخول، اعتماد، تشغيل)
-#   success         → تأكيد وحفظ وإتمام (حفظ، إتمام البيع)
-#   danger          → تدميري (حذف، إلغاء فاتورة)
-#   warning         → حذر (مسح، إيقاف)
-#   secondary       → كل الأزرار المحايدة
-BUTTON_KINDS = {
-    "primary": "Accent.TButton", "accent": "Accent.TButton",
-    "success": "Success.TButton",
-    "danger": "Danger.TButton",
-    "warning": "Warning.TButton",
-    "info": "Info.TButton",
-    "secondary": "TButton", "neutral": "TButton",
-}
-
-
-def button_style_for(kind):
-    """ttk style name for a semantic button kind."""
-    return BUTTON_KINDS.get(str(kind or "secondary"), "TButton")
-
-
-def styled_button(parent, text, command, kind="secondary"):
-    """A ttk.Button in the v6.18 hierarchy. kind: primary/success/danger/
-    warning/info/secondary."""
-    return ttk.Button(parent, text=text, command=command,
-                      style=button_style_for(kind))
-
-
-def palette(theme_name, accent="teal"):
-    base = dict(PALETTES.get(theme_name, LIGHT))
-    a = ACCENTS.get(str(accent or "teal"), ACCENTS["teal"])
-    base["accent"] = a["accent"]; base["accent_hover"] = a["hover"]
-    base["header_bg"] = a["header"]; base["header_bg2"] = a["header2"]
-    return base
 def get_ui_pref(db, key, default=""):
-    try: return db.get_setting(key, default)
-    except Exception: return default
-def set_ui_pref(db, key, value):
-    try: db.set_setting(key, str(value))
-    except Exception: pass
-
-
-# ---------------------------------------------------------------- settings
-def get_theme_name(db):
-    """Theme persisted in the settings table; v6.15 default is dark."""
     try:
-        row = db.conn.execute(
-            "SELECT value FROM settings WHERE key='ui_theme'").fetchone()
+        return db.get_setting(key, default)
+    except Exception:
+        return default
+
+
+def set_ui_pref(db, key, value):
+    try:
+        db.set_setting(key, str(value))
+    except Exception:
+        pass
+
+
+def get_theme_name(db):
+    try:
+        row = db.conn.execute("SELECT value FROM settings WHERE key='ui_theme'").fetchone()
         if row and row["value"] in PALETTES:
             return row["value"]
     except Exception:
@@ -282,674 +246,385 @@ def set_theme_name(db, theme_name):
         db.conn.execute(
             "INSERT INTO settings (key, value) VALUES ('ui_theme', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (theme_name,))
+            (theme_name,),
+        )
         db.conn.commit()
     except Exception:
-        # Older SQLite without UPSERT: fall back to update/insert.
         try:
-            cur = db.conn.execute(
-                "SELECT 1 FROM settings WHERE key='ui_theme'")
+            cur = db.conn.execute("SELECT 1 FROM settings WHERE key='ui_theme'")
             if cur.fetchone():
-                db.conn.execute(
-                    "UPDATE settings SET value=? WHERE key='ui_theme'",
-                    (theme_name,))
+                db.conn.execute("UPDATE settings SET value=? WHERE key='ui_theme'", (theme_name,))
             else:
-                db.conn.execute(
-                    "INSERT INTO settings VALUES ('ui_theme', ?)",
-                    (theme_name,))
+                db.conn.execute("INSERT INTO settings VALUES ('ui_theme', ?)", (theme_name,))
             db.conn.commit()
         except Exception:
             pass
 
 
-# ---------------------------------------------------------------- styling
-_LAST_THEME = "dark"
-_LAST_ACCENT = "teal"
-
-
-def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
-    """Configure every ttk style for the palette. Safe to call twice."""
-    global _LAST_THEME, _LAST_ACCENT
-    _LAST_THEME = theme_name
-    _LAST_ACCENT = accent
-    set_font_scale(font_scale)
-    resolve_font_family(root)
-    p = palette(theme_name, accent)
-    try:
-        style.theme_use("clam")
-    except Exception:
-        pass
-    try:
-        root.configure(bg=p["bg"])
-    except Exception:
-        pass
-    style.configure("TFrame", background=p["bg"])
-    style.configure("TLabel", background=p["bg"], foreground=p["text"],
-                    font=font(11))
-    style.configure("Header.TLabel", font=font(TYPE_SCALE["title"], bold=True),
-                    foreground=p["text"])
-    style.configure("Section.TLabel", font=font(TYPE_SCALE["subtitle"], bold=True),
-                    foreground=p["accent"])
-    style.configure("Muted.TLabel", font=font(TYPE_SCALE["caption"]), foreground=p["muted"])
-    style.configure("Total.TLabel", font=font(TYPE_SCALE["title"], bold=True),
-                    foreground=p["success"])
-    style.configure("Huge.TLabel", font=font(TYPE_SCALE["display"], bold=True),
-                    foreground=p["success"])
-    style.configure("CardTitle.TLabel", font=font(TYPE_SCALE["body"], bold=True),
-                    foreground=p["muted"], background=p["card_bg"])
-    style.configure("CardValue.TLabel", font=font(24, bold=True),
-                    foreground=p["text"], background=p["card_bg"])
-    style.configure("CardSub.TLabel", font=font(TYPE_SCALE["caption"]),
-                    foreground=p["muted"], background=p["card_bg"])
-    style.configure("Card.TFrame", background=p["card_bg"])
-    style.configure("Card.TLabel", background=p["card_bg"],
-                    foreground=p["text"], font=font(11))
-    style.configure("CardMuted.TLabel", background=p["card_bg"],
-                    foreground=p["muted"], font=font(10))
-    style.configure("CardTotal.TLabel", background=p["card_bg"],
-                    foreground=p["success"], font=font(18, bold=True))
-    style.configure("CardHuge.TLabel", background=p["card_bg"],
-                    foreground=p["success"], font=font(28, bold=True))
-    style.configure("CardChange.TLabel", background=p["card_bg"],
-                    foreground=p["info"], font=font(12, bold=True))
-    style.configure("Card.TRadiobutton", background=p["card_bg"],
-                    foreground=p["text"], font=font(11))
-    # v6.18 button hierarchy: one meaning per colour, and every variant
-    # has visible hover (lighter) and pressed (darker) states.
-    style.configure("TButton", padding=(14, 9), font=font(11, bold=True),
-                    background=p["card_bg"], foreground=p["text"],
-                    bordercolor=p["border"], lightcolor=p["card_bg"],
-                    darkcolor=p["card_bg"], focusthickness=0)
-    style.map("TButton",
-              background=[("pressed", p["border"]), ("active", p["row_alt"])],
-              foreground=[("disabled", p["muted"])],
-              bordercolor=[("focus", p["accent"]), ("active", p["accent"])])
-
-    def _solid_button(name, base, size=11, pad=(16, 10)):
-        """One solid-colour button style with hover/pressed shades."""
-        style.configure(name, background=base, foreground="#FFFFFF",
-                        font=font(size, bold=True), padding=pad,
-                        bordercolor=base, lightcolor=base, darkcolor=base,
-                        focusthickness=0)
-        style.map(name,
-                  background=[("pressed", _shade(base, 0.72)),
-                              ("active", _shade(base, 1.18))],
-                  foreground=[("disabled", p["muted"])])
-
-    _solid_button("Accent.TButton", p["accent"], size=12)
-    _solid_button("Success.TButton", p["success"], size=12)
-    _solid_button("Danger.TButton", p["danger"])
-    _solid_button("Warning.TButton", p["warning"])
-    _solid_button("Info.TButton", p["info"])
-    style.configure("Big.TButton", padding=(18, 13), font=font(14, bold=True))
-    style.configure("TEntry", font=font(12), fieldbackground=p["input_bg"],
-                    foreground=p["text"], insertcolor=p["text"],
-                    bordercolor=p["border"], lightcolor=p["border"],
-                    darkcolor=p["border"], padding=(8, 6))
-    style.map("TEntry",
-              bordercolor=[("focus", p["accent"]), ("active", p["muted"])],
-              lightcolor=[("focus", p["accent"])],
-              darkcolor=[("focus", p["accent"])])
-    style.configure("TCombobox", font=font(11), padding=(8, 6),
-                    fieldbackground=p["input_bg"], foreground=p["text"],
-                    background=p["card_bg"], bordercolor=p["border"],
-                    lightcolor=p["border"], darkcolor=p["border"],
-                    insertcolor=p["text"])
-    style.map("TCombobox",
-              fieldbackground=[("readonly", p["input_bg"])],
-              foreground=[("readonly", p["text"])],
-              bordercolor=[("focus", p["accent"]), ("active", p["muted"])],
-              lightcolor=[("focus", p["accent"])])
-    style.configure("TRadiobutton", background=p["bg"],
-                    foreground=p["text"], font=font(11))
-    style.configure("TCheckbutton", background=p["bg"],
-                    foreground=p["text"], font=font(11))
-    style.map("TRadiobutton", background=[("active", p["bg"])])
-    style.map("TCheckbutton", background=[("active", p["bg"])])
-    style.configure("TNotebook", background=p["bg"], tabposition="n",
-                    borderwidth=0)
-    style.configure("TNotebook.Tab", padding=(18, 10), font=font(11, bold=True))
-    style.map("TNotebook.Tab",
-              background=[("selected", p["card_bg"]), ("active", p["row_alt"]), ("!selected", p["bg"])],
-              foreground=[("selected", p["accent"]), ("active", p["text"]), ("!selected", p["muted"])],
-              expand=[("selected", (1, 1, 1, 0))])
-    style.configure("Nav.TNotebook", background=p["bg"], borderwidth=0, tabmargins=0)
-    try:
-        style.layout("Nav.TNotebook.Tab", [])
-    except Exception:
-        pass
-    # v6.20: Fluent tables — a quiet header row (muted text on the
-    # surface colour with a hairline border) instead of a heavy
-    # coloured bar; the data is the loud part, not the chrome.
-    style.configure("Treeview", font=font(11), rowheight=36,
-                    background=p["row_bg"], fieldbackground=p["row_bg"],
-                    foreground=p["text"], bordercolor=p["border"],
-                    borderwidth=0)
-    style.configure("Treeview.Heading", font=font(10, bold=True),
-                    background=p["row_alt"], foreground=p["muted"],
-                    relief="flat", padding=(8, 7),
-                    bordercolor=p["border"])
-    style.map("Treeview", background=[("selected", p["selected_bg"])],
-              foreground=[("selected", p["text"])])
-    style.configure("TSeparator", background=p["border"])
-    style.configure("TLabelframe", background=p["bg"], foreground=p["text"])
-    style.configure("TLabelframe.Label", font=font(12, bold=True),
-                    foreground=p["accent"], background=p["bg"])
-    style.configure("Vertical.TScrollbar", background=p["card_bg"],
-                    troughcolor=p["bg"], bordercolor=p["bg"],
-                    lightcolor=p["card_bg"], darkcolor=p["card_bg"],
-                    arrowcolor=p["muted"], borderwidth=0, arrowsize=13)
-    style.map("Vertical.TScrollbar",
-              background=[("active", p["border"])])
-    style.configure("Horizontal.TScrollbar", background=p["card_bg"],
-                    troughcolor=p["bg"], bordercolor=p["bg"],
-                    lightcolor=p["card_bg"], darkcolor=p["card_bg"],
-                    arrowcolor=p["muted"], borderwidth=0, arrowsize=13)
-    style.map("Horizontal.TScrollbar",
-              background=[("active", p["border"])])
-    # v6.15: plain-tk widgets (Text / Listbox / Canvas) follow the palette
-    # too — option_add covers every current and future instance.
-    try:
-        root.option_add("*Text.Background", p["card_bg"])
-        root.option_add("*Text.Foreground", p["text"])
-        root.option_add("*Text.InsertBackground", p["text"])
-        root.option_add("*Text.SelectBackground", p["selected_bg"])
-        root.option_add("*Text.SelectForeground", p["text"])
-        root.option_add("*Text.highlightColor", p["accent"])
-        root.option_add("*Listbox.Background", p["card_bg"])
-        root.option_add("*Listbox.Foreground", p["text"])
-        root.option_add("*Listbox.SelectBackground", p["selected_bg"])
-        root.option_add("*Listbox.SelectForeground", p["text"])
-        root.option_add("*TCombobox*Listbox.Background", p["input_bg"])
-        root.option_add("*TCombobox*Listbox.Foreground", p["text"])
-        root.option_add("*TCombobox*Listbox.SelectBackground", p["selected_bg"])
-    except Exception:
-        pass
-    return p
-
-
-def style_treeview(tree, theme_name="light"):
-    """Striping + status tags for one Treeview. Call after each refresh.
-
-    v6.18 status tags (same language as status_colors): paid/synced/ok
-    are success, due/warn/high are warning, failed/voided/crit are
-    danger, held is muted grey.
-    """
-    p = palette(theme_name)
-    try:
-        tree.tag_configure("even", background=p["row_bg"],
-                           foreground=p["text"])
-        tree.tag_configure("odd", background=p["row_alt"],
-                           foreground=p["text"])
-        tree.tag_configure("crit", background=p["danger_bg"],
-                           foreground=p["danger"], font=font(11, bold=True))
-        tree.tag_configure("high", background=p["warning_bg"],
-                           foreground=p["warning"], font=font(11, bold=True))
-        tree.tag_configure("ok", background=p["success_bg"],
-                           foreground=p["success"])
-        tree.tag_configure("warn", background=p["warning_bg"],
-                           foreground=p["warning"])
-        tree.tag_configure("danger_text", foreground=p["danger"],
-                           font=font(11, bold=True))
-        tree.tag_configure("warn_text", foreground=p["warning"],
-                           font=font(11, bold=True))
-        # v6.18: held (محذوف مؤقتاً) and named status rows.
-        tree.tag_configure("held", foreground=p["muted"])
-        tree.tag_configure("paid", background=p["success_bg"],
-                           foreground=p["success"])
-        tree.tag_configure("due", background=p["warning_bg"],
-                           foreground=p["warning"])
-        tree.tag_configure("failed", background=p["danger_bg"],
-                           foreground=p["danger"], font=font(11, bold=True))
-        tree.tag_configure("synced", background=p["info_bg"],
-                           foreground=p["info"])
-    except Exception:
-        pass
-
-
-# Tags stripe_rows must never overwrite with even/odd striping.
-STATUS_TAGS = ("crit", "high", "ok", "warn", "danger_text", "warn_text",
-               "held", "paid", "due", "failed", "synced")
-
-
-def stripe_rows(tree, theme_name="light"):
-    """Re-apply even/odd tags, preserving any status tag already set."""
-    style_treeview(tree, theme_name)
-    try:
-        for idx, iid in enumerate(tree.get_children()):
-            cur_tags = tree.item(iid, "tags")
-            tags = tuple(t for t in cur_tags if t in STATUS_TAGS)
-            if not tags:
-                tags = ("even" if idx % 2 == 0 else "odd",)
-            if tuple(cur_tags) != tags:
-                tree.item(iid, tags=tags)
-    except Exception:
-        pass
-
-
-def status_tag_for_urgency(urgency):
-    return {"حرجة": "crit", "عالية": "high", "عادية": "ok",
-            "مستقرة": "ok"}.get(str(urgency), "odd")
-
-
-# ---------------------------------------------------------------- widgets
-# v6.20: Fluent cards have rounded corners and a hairline border.
-# Tkinter has no native rounded frames, so the card is a Canvas that
-# draws a rounded rectangle (plus a small accent pill) and holds the
-# labels in an inner frame — and any failure falls back to the plain
-# v6.15 frame card, so a theme glitch can never lose dashboard content.
-CARD_RADIUS = 10
-
-
-def _round_rect(canvas, x1, y1, x2, y2, r, **kw):
-    """Polygon approximating a rounded rectangle on a canvas."""
-    r = max(0, min(int(r), (x2 - x1) // 2, (y2 - y1) // 2))
-    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r,
-           x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r,
-           x1, y1 + r, x1, y1]
-    return canvas.create_polygon(pts, smooth=True, **kw)
-
-
-def make_card(parent, title, value, subtitle="", accent="#0F766E",
-              theme_name="light"):
-    """A summary card.  Returns (frame, value_label, subtitle_label) so
-the caller can update the numbers later without rebuilding the card."""
-    p = palette(theme_name)
-    try:
-        return _make_rounded_card(parent, title, value, subtitle,
-                                  accent, theme_name, p)
-    except Exception:
-        return _make_flat_card(parent, title, value, subtitle, accent, p)
-
-
-def _card_labels(body, title, value, subtitle):
-    """The three labels every card variant shows."""
-    ttk.Label(body, text=title, style="CardTitle.TLabel").pack(anchor="w")
-    val = ttk.Label(body, text=value, style="CardValue.TLabel")
-    val.pack(anchor="w", pady=(2, 0))
-    sub = ttk.Label(body, text=subtitle, style="CardSub.TLabel")
-    sub.pack(anchor="w")
-    return val, sub
-
-
-def _make_rounded_card(parent, title, value, subtitle, accent,
-                       theme_name, p):
-    """Fluent rounded card: rounded rect + accent pill on a canvas."""
-    cv = tk.Canvas(parent, bg=p["bg"], highlightthickness=0, bd=0)
-    cv._card_theme = theme_name
-    cv._card_hover = False
-    inner = tk.Frame(cv, bg=p["card_bg"], padx=12, pady=10)
-    win_id = cv.create_window(0, 0, window=inner, anchor="nw")
-    val, sub = _card_labels(inner, title, value, subtitle)
-
-    def _redraw(_event=None):
-        try:
-            pal = palette(getattr(cv, "_card_theme", "light"))
-            w = max(cv.winfo_width(), 40)
-            h = max(cv.winfo_height(), 24)
-            outline_col = accent if getattr(cv, "_card_hover", False) else pal["border"]
-            cv.delete("cardshape")
-            _round_rect(cv, 1, 1, w - 2, h - 2, CARD_RADIUS,
-                        fill=pal["card_bg"], outline=outline_col,
-                        width=1, tags="cardshape")
-            cy = h // 2
-            _round_rect(cv, 7, cy - 9, 11, cy + 9, 2,
-                        fill=accent, outline="", tags="cardshape")
-            cv.coords(win_id, 19, 4)
-            cv.itemconfigure(win_id, width=max(w - 25, 1),
-                             height=max(h - 8, 1))
-        except Exception:
-            pass
-
-    def _set_hover(state):
-        if getattr(cv, "_card_hover", False) != state:
-            cv._card_hover = state
-            _redraw()
-
-    cv.bind("<Configure>", _redraw)
-    cv.bind("<Enter>", lambda _e: _set_hover(True))
-    cv.bind("<Leave>", lambda _e: _set_hover(False))
-    inner.bind("<Enter>", lambda _e: _set_hover(True))
-    inner.bind("<Leave>", lambda _e: _set_hover(False))
-    # A canvas does not count window items in its requested size, so
-    # without this the card would collapse to a strip; ask for the
-    # labels' natural size (the row still stretches it with expand).
-    try:
-        inner.update_idletasks()
-        cv.configure(width=max(inner.winfo_reqwidth() + 25, 160),
-                     height=max(inner.winfo_reqheight() + 8, 70))
-    except Exception:
-        cv.configure(width=200, height=90)
-    cv._card_body = inner
-    cv._card_value = val
-    cv._card_sub = sub
-    return cv, val, sub
-
-
-def _make_flat_card(parent, title, value, subtitle, accent, p):
-    """The pre-v6.20 plain frame card — kept as the safe fallback."""
-    frame = tk.Frame(parent, bg=p["card_bg"], highlightbackground=p["border"],
-                     highlightthickness=1, padx=16, pady=12)
-    accent_bar = tk.Frame(frame, bg=accent, width=4)
-    accent_bar.pack(side="left", fill="y", padx=(0, 10))
-    body = tk.Frame(frame, bg=p["card_bg"])
-    body.pack(side="left", fill="both", expand=True)
-    val, sub = _card_labels(body, title, value, subtitle)
-    frame._card_body = body
-    frame._card_value = val
-    frame._card_sub = sub
-    frame._card_accent = accent_bar
-    return frame, val, sub
-
-
-def recolor_card(frame, theme_name="light"):
-    p = palette(theme_name)
-    try:
-        if isinstance(frame, tk.Canvas):
-            # Rounded card: the canvas keeps the window background so the
-            # rounded corners blend in; the shape redraw picks up the
-            # new palette through _card_theme.
-            frame._card_theme = theme_name
-            frame.configure(bg=p["bg"])
-            frame._card_body.configure(bg=p["card_bg"])
-            frame.event_generate("<Configure>")
-        else:
-            frame.configure(bg=p["card_bg"], highlightbackground=p["border"])
-            frame._card_body.configure(bg=p["card_bg"])
-        frame._card_value.configure(background=p["card_bg"])
-        frame._card_sub.configure(background=p["card_bg"])
-    except Exception:
-        pass
-
-
-def make_banner(parent, text="", kind="info", theme_name="light"):
-    """A full-width coloured banner label. kind: info/success/warning/danger."""
-    p = palette(theme_name)
-    colours = {"info": (p["info_bg"], p["info"]),
-               "success": (p["success_bg"], p["success"]),
-               "warning": (p["warning_bg"], p["warning"]),
-               "danger": (p["danger_bg"], p["danger"])}
-    bg, fg = colours.get(kind, colours["info"])
-    lbl = tk.Label(parent, text=text, bg=bg, fg=fg, font=font(11, bold=True),
-                   anchor="w", padx=10, pady=6, wraplength=1100,
-                   justify="left")
-    return lbl
-
-
-def set_banner(lbl, text, kind="info", theme_name="light"):
-    p = palette(theme_name)
-    colours = {"info": (p["info_bg"], p["info"]),
-               "success": (p["success_bg"], p["success"]),
-               "warning": (p["warning_bg"], p["warning"]),
-               "danger": (p["danger_bg"], p["danger"])}
-    bg, fg = colours.get(kind, colours["info"])
-    try:
-        lbl.configure(text=text, bg=bg, fg=fg)
-    except Exception:
-        pass
-
-
-def section_title(parent, text, theme_name="light"):
-    lbl = ttk.Label(parent, text=text, style="Section.TLabel")
-    lbl.pack(anchor="w", padx=10, pady=(10, 2))
-    return lbl
-
-
-def big_button(parent, text, command, style_name="Accent.TButton"):
-    return ttk.Button(parent, text=text, command=command,
-                      style=style_name)
-
-
-# ---------------------------------------------------------------- status pill
-def status_label(parent, text="", kind="info", theme_name="light"):
-    """A small pill label in the v6.18 status colour language."""
-    fg, bg = status_colors(kind, theme_name)
-    return tk.Label(parent, text=text, bg=bg, fg=fg,
-                    font=font(10, bold=True), padx=10, pady=3,
-                    anchor="center", justify="center")
-
-
-def set_status(lbl, text, kind=None, theme_name="light"):
-    """Update a pill/status label; kind auto-detected from the text."""
-    if kind is None:
-        kind = status_kind_for(text)
-    fg, bg = status_colors(kind, theme_name)
-    try:
-        lbl.configure(text=text, bg=bg, fg=fg)
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------- windows
-# v6.20: Windows-11 window behaviour — screen-aware default size, a
-# sensible minimum, and remembered geometry (size, position and the
-# maximized state) so the app reopens exactly how the user left it.
-import re as _re
-
-_GEOMETRY_RE = _re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
-
-
 def _hex_to_colorref(hex_color):
-    """Convert #RRGGBB to Win32 COLORREF (0x00BBGGRR)."""
-    h = str(hex_color or "").lstrip("#")
-    if len(h) != 6:
-        return 0
+    h = str(hex_color or "#202020").lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return (b << 16) | (g << 8) | r
 
 
-def apply_win11_window_style(win, theme_name=None, accent=None, use_header_tint=False):
-    """Apply native Windows 11 DWM title-bar, rounded corners & border tint.
-
-    Safe no-op on Linux, headless tests, or older Windows builds.
-    """
+def apply_win11_window_style(win, theme_name=None, accent=None):
+    """Apply Windows 11 Mica / dark titlebar / rounded corners safely."""
+    t = theme_name or _LAST_THEME
+    a = accent or _LAST_ACCENT
     try:
-        import sys
-        if sys.platform != "win32" or win is None:
-            return
+        if hasattr(win, "setMicaEffectEnabled"):
+            win.setMicaEffectEnabled(True)
+    except Exception:
+        pass
+    if os.name != "nt":
+        return
+    try:
         import ctypes
-        tname = theme_name or _LAST_THEME
-        acc = accent or _LAST_ACCENT
-        p = palette(tname, acc)
-        win.update_idletasks()
-        hwnd = ctypes.windll.user32.GetParent(win.winfo_id()) or win.winfo_id()
+        p = palette(t, a)
+        hwnd = int(win.winId())
         if not hwnd:
             return
         dwm = ctypes.windll.dwmapi
-        dark_val = ctypes.c_int(1 if tname == "dark" or use_header_tint else 0)
-        for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (Win11 / Win10 1903+)
+        dark_val = ctypes.c_int(1 if t == "dark" else 0)
+        for attr in (20, 19):
             try:
                 dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(dark_val), ctypes.sizeof(dark_val))
             except Exception:
                 pass
-        # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2
-        corner = ctypes.c_int(2)
-        dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
-        # DWMWA_BORDER_COLOR = 34
-        border = ctypes.c_int(_hex_to_colorref(p["border"]))
-        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))
-        # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36 (Win11 22H2+)
-        cap_hex = p["header_bg"] if use_header_tint else p["bg"]
-        txt_hex = "#FFFFFF" if (tname == "dark" or use_header_tint) else p["text"]
-        cap = ctypes.c_int(_hex_to_colorref(cap_hex))
-        txt = ctypes.c_int(_hex_to_colorref(txt_hex))
-        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), ctypes.sizeof(cap))
-        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), ctypes.sizeof(txt))
+        try:
+            corner = ctypes.c_int(2)
+            dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
+            border = ctypes.c_int(_hex_to_colorref(p["border"]))
+            dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))
+        except Exception:
+            pass
     except Exception:
         pass
 
 
-def center_window(win, w, h):
-    """Centre a window on the screen at the given size (safe no-op)."""
-    try:
-        win.update_idletasks()
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-        x = max(0, (sw - w) // 2)
-        y = max(0, (sh - h) // 2)
-        win.geometry("%dx%d+%d+%d" % (w, h, x, y))
-        apply_win11_window_style(win)
-    except Exception:
-        pass
+def apply_qt_theme(app, theme_name="dark", accent="teal", font_scale=0):
+    """Apply Fluent theme, accent color, RTL direction, and base typography."""
+    global _LAST_THEME, _LAST_ACCENT
+    _LAST_THEME = theme_name if theme_name in PALETTES else "dark"
+    _LAST_ACCENT = accent if accent in ACCENTS else "teal"
+    set_font_scale(font_scale)
+    fam = resolve_font_family()
+    p = palette(_LAST_THEME, _LAST_ACCENT)
+
+    setTheme(Theme.DARK if _LAST_THEME == "dark" else Theme.LIGHT)
+    setThemeColor(p["accent"])
+
+    if app is not None:
+        try:
+            app.setLayoutDirection(Qt.RightToLeft)
+            f = QFont(fam, 10 + FONT_DELTA)
+            app.setFont(f)
+        except Exception:
+            pass
+    return p
 
 
-def _geometry_ok(geom, sw, sh):
-    """A remembered geometry is used only when it still fits the screen
-    (a monitor could have been unplugged since it was saved)."""
-    m = _GEOMETRY_RE.match(str(geom or ""))
-    if not m:
-        return False
-    w, h, x, y = (int(v) for v in m.groups())
-    if w < 700 or h < 450 or w > sw + 400 or h > sh + 300:
-        return False
-    if x < -100 or y < -100 or x > sw - 60 or y > sh - 60:
-        return False
-    return True
-
-
-def setup_main_window(root, db):
-    """Size/place the main window and remember its geometry on close.
-
-    First run keeps the old behaviour users know (starts maximized);
-    later runs restore the saved size/position and maximized state.
-    Everything is wrapped so a bad saved value can never block startup.
+def window_qss(theme_name=None, accent=None):
+    """Subtle global polish stylesheet compatible with FluentWindow & QDialog."""
+    p = palette(theme_name, accent)
+    return f"""
+    QDialog {{
+        background-color: {p["bg"]};
+        color: {p["text"]};
+    }}
+    QScrollArea, SmoothScrollArea {{
+        background-color: transparent;
+        border: none;
+    }}
+    QLabel[muted="true"] {{
+        color: {p["muted"]};
+    }}
+    QFrame[separator="true"] {{
+        background-color: {p["border"]};
+        max-height: 1px;
+        min-height: 1px;
+    }}
     """
+
+
+def make_separator():
+    sep = QFrame()
+    sep.setFrameShape(QFrame.HLine)
+    sep.setProperty("separator", "true")
+    sep.setFixedHeight(1)
+    return sep
+
+
+def make_scroll_page(object_name="page"):
+    """Return (scroll_area, container_widget, container_layout) for scrollable tabs."""
+    scroll = SmoothScrollArea()
+    scroll.setObjectName(object_name)
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setStyleSheet("background-color: transparent; border: none;")
+
+    inner = QWidget()
+    inner.setStyleSheet("background-color: transparent;")
+    layout = QVBoxLayout(inner)
+    layout.setContentsMargins(20, 14, 20, 20)
+    layout.setSpacing(12)
+    scroll.setWidget(inner)
+    return scroll, inner, layout
+
+
+class StatCard(CardWidget):
+    """Windows 11 Fluent KPI Card with colored accent bar and optional click action."""
+    clicked = Signal()
+
+    def __init__(self, title, value="—", sub="", accent_color=None, click_cb=None, parent=None):
+        super().__init__(parent)
+        self._accent_color = accent_color or palette()["accent"]
+        self._click_cb = click_cb
+        if click_cb is not None:
+            self.setCursor(Qt.PointingHandCursor)
+            self.clicked.connect(click_cb)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._bar = QFrame()
+        self._bar.setFixedWidth(5)
+        self._bar.setStyleSheet(
+            f"background-color: {self._accent_color}; border-top-right-radius: 6px; border-bottom-right-radius: 6px;"
+        )
+        outer.addWidget(self._bar)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(14, 12, 14, 12)
+        body.setSpacing(4)
+
+        self.lbl_title = CaptionLabel(title, self)
+        self.lbl_title.setFont(qfont(10, bold=True))
+        self.lbl_value = QLabel(str(value), self)
+        self.lbl_value.setFont(qfont(20, bold=True))
+        self.lbl_sub = CaptionLabel(str(sub), self)
+        self.lbl_sub.setWordWrap(True)
+
+        body.addWidget(self.lbl_title)
+        body.addWidget(self.lbl_value)
+        body.addWidget(self.lbl_sub)
+        outer.addLayout(body, 1)
+        self.recolor()
+
+    def set_values(self, value=None, sub=None):
+        if value is not None:
+            self.lbl_value.setText(str(value))
+        if sub is not None:
+            self.lbl_sub.setText(str(sub))
+
+    def recolor(self, theme_name=None, accent=None):
+        p = palette(theme_name, accent)
+        self.lbl_title.setStyleSheet(f"color: {p['muted']}; background: transparent;")
+        self.lbl_value.setStyleSheet(f"color: {p['text']}; background: transparent;")
+        self.lbl_sub.setStyleSheet(f"color: {p['muted']}; background: transparent;")
+
+    def mousePressEvent(self, event):
+        if self._click_cb is not None and event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+def configure_table(table: TableWidget, headers, widths=None, stretch_cols=None, min_height=220):
+    """Configure a Fluent TableWidget consistently across the app."""
+    table.setColumnCount(len(headers))
+    table.setHorizontalHeaderLabels(list(headers))
+    table.setBorderVisible(True)
+    table.setBorderRadius(8)
+    table.setWordWrap(False)
+    table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    table.setSelectionBehavior(QAbstractItemView.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SingleSelection)
+    table.verticalHeader().hide()
+    table.verticalHeader().setDefaultSectionSize(34)
+    table.setMinimumHeight(min_height)
+    table.setAlternatingRowColors(True)
+
+    hh = table.horizontalHeader()
+    hh.setDefaultAlignment(Qt.AlignCenter)
+    if widths:
+        for idx, w in enumerate(widths):
+            if w is not None and idx < len(headers):
+                table.setColumnWidth(idx, w)
+    if stretch_cols:
+        for idx in stretch_cols:
+            if 0 <= idx < len(headers):
+                hh.setSectionResizeMode(idx, QHeaderView.Stretch)
+    else:
+        hh.setStretchLastSection(True)
+
+
+def set_table_rows(table: TableWidget, rows_values, row_styles=None):
+    """Fast batch populate TableWidget without intermediate repaints."""
+    table.setUpdatesEnabled(False)
+    try:
+        table.setRowCount(len(rows_values))
+        for r_idx, vals in enumerate(rows_values):
+            fg_bg = row_styles[r_idx] if row_styles and r_idx < len(row_styles) else None
+            for c_idx, val in enumerate(vals):
+                item = QTableWidgetItem(str(val if val is not None else ""))
+                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                if fg_bg:
+                    fg, bg = fg_bg
+                    if fg:
+                        item.setForeground(QBrush(QColor(fg)))
+                    if bg:
+                        item.setBackground(QBrush(QColor(bg)))
+                table.setItem(r_idx, c_idx, item)
+    finally:
+        table.setUpdatesEnabled(True)
+
+
+def selected_row_index(table: TableWidget):
+    rows = table.selectionModel().selectedRows() if table.selectionModel() else []
+    if not rows:
+        row = table.currentRow()
+        return row if row >= 0 else None
+    return rows[0].row()
+
+
+class DrugSearchTableWidget(TableWidget):
+    """Reusable Excel-style sortable Fluent drug table shared across screens."""
+
+    COLS = ("name", "ar", "strength", "form", "box", "strip", "pill", "stock")
+    HEADS = ("الدواء", "عربي", "التركيز", "الشكل", "سعر العلبة", "سعر الشريط", "سعر الحبة", "المخزون (علبة)")
+    WIDTHS = (165, 115, 85, 85, 90, 90, 90, 95)
+
+    drugActivated = Signal(dict)
+
+    def __init__(self, money_fn, allowed_units_fn, unit_price_fn, min_height=220, parent=None):
+        super().__init__(parent)
+        self._money = money_fn
+        self._allowed = allowed_units_fn
+        self._unit_price = unit_price_fn
+        self._results = []
+        self._sort_col = None
+        self._sort_rev = False
+
+        configure_table(self, self.HEADS, self.WIDTHS, stretch_cols=(0,), min_height=min_height)
+        self.horizontalHeader().sectionClicked.connect(self._on_header_click)
+        self.cellDoubleClicked.connect(self._on_double_click)
+
+    def fill(self, results, empty_message=None):
+        self._results = list(results or [])
+        self._sort_col = None
+        self._sort_rev = False
+        self._render(empty_message=empty_message)
+
+    def _row_values(self, d):
+        allowed = set(self._allowed(d))
+        return (
+            d["trade_en"],
+            d.get("trade_ar", ""),
+            d.get("strength", ""),
+            d.get("form", ""),
+            self._money(self._unit_price(d, "box")),
+            self._money(self._unit_price(d, "strip")) if "strip" in allowed else "—",
+            self._money(self._unit_price(d, "pill")) if "pill" in allowed else "—",
+            "%.1f" % d.get("stock_boxes", 0),
+        )
+
+    def _render(self, empty_message=None):
+        if not self._results and empty_message:
+            set_table_rows(self, [(empty_message, "", "", "", "", "", "", "")])
+            return
+        p = palette()
+        rows = [self._row_values(d) for d in self._results]
+        styles = [
+            (p["danger"], p["danger_bg"]) if d.get("stock_boxes", 0) <= 0 else None
+            for d in self._results
+        ]
+        set_table_rows(self, rows, styles)
+
+    def selected_drug(self):
+        idx = selected_row_index(self)
+        if idx is None or idx < 0 or idx >= len(self._results):
+            return None
+        return self._results[idx]
+
+    def _on_header_click(self, col_idx):
+        if not self._results or col_idx >= len(self.COLS):
+            return
+        col = self.COLS[col_idx]
+        rev = (not self._sort_rev) if self._sort_col == col else False
+        if col == "name":
+            key = lambda d: str(d["trade_en"]).lower()
+        elif col == "ar":
+            key = lambda d: str(d.get("trade_ar", ""))
+        elif col == "strength":
+            key = lambda d: str(d.get("strength", ""))
+        elif col == "form":
+            key = lambda d: str(d.get("form", ""))
+        elif col in ("box", "strip", "pill"):
+            key = lambda d, c=col: self._unit_price(d, c)
+        elif col == "stock":
+            key = lambda d: d.get("stock_boxes", 0)
+        else:
+            key = lambda d: str(d["trade_en"]).lower()
+        self._results.sort(key=key, reverse=rev)
+        self._sort_col = col
+        self._sort_rev = rev
+        self._render()
+
+    def _on_double_click(self, row, _col):
+        if 0 <= row < len(self._results):
+            self.drugActivated.emit(self._results[row])
+
+
+def setup_main_window_geometry(win, db):
+    """Restore/save main window size, position, and maximized state in settings."""
     saved = get_ui_pref(db, "ui_geometry", "")
     maximized = get_ui_pref(db, "ui_maximized", "") == "1"
-    try:
-        sw = root.winfo_screenwidth()
-        sh = root.winfo_screenheight()
-    except Exception:
-        sw, sh = 1280, 800
-    # v6.21: the minimum must fit the real screen — a 1024x600 minimum
-    # is wrong on a 1366x768 laptop once the taskbar takes its share,
-    # so cap it below the actual screen size.
-    try:
-        root.minsize(min(1024, max(sw - 40, 640)),
-                     min(600, max(sh - 120, 480)))
-    except Exception:
-        pass
+    screen = QApplication.primaryScreen()
+    avail = screen.availableGeometry() if screen else None
+    sw = avail.width() if avail else 1280
+    sh = avail.height() if avail else 800
+
+    win.setMinimumSize(min(1024, max(sw - 40, 720)), min(640, max(sh - 80, 500)))
+
     placed = False
-    if _geometry_ok(saved, sw, sh):
-        try:
-            root.geometry(saved)
+    m = _GEOMETRY_RE.match(str(saved or ""))
+    if m:
+        w, h, x, y = (int(v) for v in m.groups())
+        if 700 <= w <= sw + 200 and 450 <= h <= sh + 200 and -50 <= x <= sw - 80 and -50 <= y <= sh - 80:
+            win.resize(w, h)
+            win.move(x, y)
             placed = True
-        except Exception:
-            placed = False
     if not placed:
-        w = min(int(sw * 0.85), 1440)
-        h = min(int(sh * 0.85), 900)
-        x = max(0, (sw - w) // 2)
-        y = max(0, (sh - h) // 2)
-        try:
-            root.geometry("%dx%d+%d+%d" % (w, h, x, y))
-        except Exception:
-            pass
+        w = min(int(sw * 0.88), 1460)
+        h = min(int(sh * 0.88), 920)
+        win.resize(w, h)
+        if avail:
+            win.move(avail.x() + max(0, (sw - w) // 2), avail.y() + max(0, (sh - h) // 2))
     if maximized or not saved:
-        try:
-            root.state("zoomed")
-        except Exception:
-            pass
+        win.showMaximized()
 
-    def _save_and_close():
-        try:
-            zoomed = root.state() == "zoomed"
-            set_ui_pref(db, "ui_maximized", "1" if zoomed else "0")
-            if not zoomed:
-                # Only the windowed geometry is worth remembering —
-                # a maximized window's geometry is the whole screen.
-                set_ui_pref(db, "ui_geometry", root.winfo_geometry())
-        except Exception:
-            pass
-        root.destroy()
 
+def save_main_window_geometry(win, db):
     try:
-        root.protocol("WM_DELETE_WINDOW", _save_and_close)
+        is_max = win.isMaximized()
+        set_ui_pref(db, "ui_maximized", "1" if is_max else "0")
+        if not is_max:
+            g = win.geometry()
+            set_ui_pref(db, "ui_geometry", "%dx%d+%d+%d" % (g.width(), g.height(), g.x(), g.y()))
     except Exception:
         pass
 
 
-def fit_dialog(win, w, h, margin_x=60, margin_y=110):
-    """v6.22: cap a dialog to the real screen and centre it.
-
-    A fixed ``geometry("480x900")`` clips off-screen on small laptops
-    and at 125%/150% display scaling; this keeps the requested size
-    when it fits and shrinks/centres it when it does not.  Returns the
-    applied (width, height).
-    """
-    try:
-        win.update_idletasks()
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-        w = min(int(w), max(sw - margin_x, 400))
-        h = min(int(h), max(sh - margin_y, 320))
-        x = max(0, (sw - w) // 2)
-        y = max(0, (sh - h) // 2)
-        win.geometry("%dx%d+%d+%d" % (w, h, x, y))
-        apply_win11_window_style(win)
-        return w, h
-    except Exception:
-        try:
-            win.geometry("%dx%d" % (int(w), int(h)))
-        except Exception:
-            pass
-        return w, h
-
-
-def dialog_form_area(win, theme_name="light"):
-    """v6.22: scrollable form area + an always-visible footer.
-
-    Returns (body, footer).  Pack form fields into ``body`` and action
-    buttons into ``footer``; the footer is pinned to the bottom of the
-    window, so the action button can never be pushed off-screen no
-    matter how tall the form is or how small the screen is.
-    """
-    p = palette(theme_name)
-    footer = ttk.Frame(win)
-    footer.pack(side="bottom", fill="x", padx=10, pady=(6, 10))
-    canvas = tk.Canvas(win, bg=p["bg"], highlightthickness=0, bd=0)
-    vbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
-    canvas.configure(yscrollcommand=vbar.set)
-    vbar.pack(side="right", fill="y")
-    canvas.pack(side="left", fill="both", expand=True)
-    body = ttk.Frame(canvas)
-    body_id = canvas.create_window((0, 0), window=body, anchor="nw")
-
-    def _conf(_e=None):
-        try:
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas.itemconfig(body_id, width=canvas.winfo_width(),
-                              height=max(canvas.winfo_height(),
-                                         body.winfo_reqheight()))
-        except Exception:
-            pass
-
-    body.bind("<Configure>", _conf)
-    canvas.bind("<Configure>", _conf)
-
-    def _is_inside(widget):
-        w = widget
-        while w is not None:
-            if w is win:
-                return True
-            w = getattr(w, "master", None)
-        return False
-
-    def _on_wheel(e):
-        try:
-            if not win.winfo_exists():
-                return
-            if not _is_inside(e.widget):
-                return
-            if getattr(e, "delta", 0):
-                canvas.yview_scroll(int(-e.delta / 120), "units")
-        except Exception:
-            pass
-
-    # No unbind on close: unbind_all would also remove the main tabs'
-    # wheel bindings.  Closed dialogs no-op through winfo_exists above.
-    try:
-        canvas.bind_all("<MouseWheel>", _on_wheel)
-    except Exception:
-        pass
-    return body, footer
+def fit_dialog_widget(dlg, w, h):
+    """Size and center a Qt dialog cleanly within the available screen."""
+    screen = QApplication.primaryScreen()
+    avail = screen.availableGeometry() if screen else None
+    sw = avail.width() if avail else 1280
+    sh = avail.height() if avail else 800
+    w = min(int(w), max(sw - 60, 420))
+    h = min(int(h), max(sh - 90, 340))
+    dlg.resize(w, h)
+    if avail:
+        dlg.move(avail.x() + max(0, (sw - w) // 2), avail.y() + max(0, (sh - h) // 2))
+    apply_win11_window_style(dlg)

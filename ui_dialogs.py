@@ -1,27 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-Pharmacy Enterprise v6.18 — themed message dialogs (stdlib Tkinter only).
+Pharmacy Enterprise — Fluent Design Dialogs (PySide6 + PySide6-Fluent-Widgets).
 
-A drop-in replacement for tkinter.messagebox: the same function names
-and signatures (showinfo / showwarning / showerror / askyesno), but the
-dialogs are small themed windows in the app's palette — a coloured
-severity strip, an icon, Arabic buttons in the v6.18 button hierarchy —
-instead of the default OS message box.
-
-Behaviour contract (never broken):
-- showinfo/showwarning/showerror show a modal dialog with an «حسناً»
-  button and return "ok" (like messagebox).
-- askyesno shows «نعم» / «لا» and returns True/False; Escape or closing
-  the window means «لا» (False), matching messagebox's safe default.
-- Any failure while building the themed dialog falls back to the real
-  tkinter.messagebox, so the user always sees the message.
-
-The active theme is pushed with set_theme(theme_name, accent) whenever
-the app applies its theme; before that the dark default is used.
+Provides a drop-in replacement for showinfo / showwarning / showerror / askyesno
+plus RTL-aware Fluent helpers: askstring, askinteger, askfloat, TextViewerDialog,
+get_open_filename, and get_save_filename.
 """
-import tkinter as tk
-from tkinter import messagebox as _mb
-from tkinter import ttk
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+)
+from qfluentwidgets import (
+    BodyLabel,
+    CardWidget,
+    LineEdit,
+    MessageBox,
+    PrimaryPushButton,
+    PushButton,
+    SubtitleLabel,
+    TextEdit,
+)
 
 import ui_theme
 
@@ -30,7 +34,6 @@ _ACCENT = "teal"
 
 
 def set_theme(theme_name, accent=None):
-    """Called by the app after every apply_theme so dialogs follow it."""
     global _THEME_NAME, _ACCENT
     if theme_name in ui_theme.PALETTES:
         _THEME_NAME = theme_name
@@ -38,167 +41,269 @@ def set_theme(theme_name, accent=None):
         _ACCENT = accent
 
 
-# kind → (icon, status colour kind, OK button kind)
 _KIND_META = {
-    "info": ("ℹ️", "info", "primary"),
-    "success": ("✅", "success", "success"),
-    "warning": ("⚠️", "warning", "warning"),
-    "error": ("⛔", "danger", "danger"),
-    "question": ("❓", "warning", "primary"),
+    "info":     ("ℹ️", "info"),
+    "success":  ("✅", "success"),
+    "warning":  ("⚠️", "warning"),
+    "error":    ("⛔", "danger"),
+    "question": ("❓", "warning"),
 }
 
 
-def _run_dialog(title, message, kind, parent, buttons):
-    """Build and run the modal themed dialog.
+def _resolve_parent(parent):
+    if parent is not None and hasattr(parent, "isVisible"):
+        return parent
+    win = QApplication.activeWindow()
+    return win
 
-    buttons: list of (text, result, button_kind).  Returns the chosen
-    result, or None when the window was closed without choosing.
-    Raises on any construction problem — callers fall back to the real
-    messagebox, so a theme glitch can never hide a message.
-    """
-    root = parent or tk._default_root
-    if root is None:
-        raise RuntimeError("no Tk root for themed dialog")
-    pal = ui_theme.palette(_THEME_NAME, _ACCENT)
-    icon, col_kind, _ok_kind = _KIND_META.get(kind, _KIND_META["info"])
-    fg, bg = ui_theme.status_colors(col_kind, _THEME_NAME, _ACCENT)
 
-    win = tk.Toplevel(root)
-    win.withdraw()
-    win.title(str(title))
-    win.configure(bg=pal["card_bg"])
-    win.resizable(False, False)
-    ui_theme.apply_win11_window_style(win, _THEME_NAME, _ACCENT)
-    try:
-        win.transient(root)
-    except Exception:
-        pass
+def _run_fluent_message(title, message, kind, parent=None, yes_no=False):
+    msg = str(message or "")
+    p = ui_theme.palette(_THEME_NAME, _ACCENT)
+    icon, col_kind = _KIND_META.get(kind, _KIND_META["info"])
+    fg, _bg = ui_theme.status_colors(col_kind, _THEME_NAME, _ACCENT)
+    host = _resolve_parent(parent)
 
-    result = {"value": None}
-
-    def choose(value):
-        result["value"] = value
+    # Use Fluent MessageBox overlay when we have a visible host window and short message
+    if host is not None and host.isVisible() and msg.count("\n") <= 12 and len(msg) <= 700:
         try:
-            win.destroy()
+            box = MessageBox(f"{icon}  {title}", msg, host)
+            box.yesButton.setText("نعم" if yes_no else "حسناً")
+            if yes_no:
+                box.cancelButton.setText("لا")
+            else:
+                box.cancelButton.hide()
+                box.buttonLayout.insertStretch(0, 1)
+            return bool(box.exec())
         except Exception:
             pass
 
-    # Coloured severity strip on top.
-    tk.Frame(win, bg=fg, height=5).pack(fill="x")
+    # Standalone / long-text / pre-window themed dialog
+    dlg = QDialog(host)
+    dlg.setWindowTitle(str(title))
+    dlg.setLayoutDirection(Qt.RightToLeft)
+    dlg.setStyleSheet(ui_theme.window_qss(_THEME_NAME, _ACCENT))
+    dlg.setModal(True)
 
-    head = tk.Frame(win, bg=pal["card_bg"])
-    head.pack(fill="x", padx=16, pady=(12, 0))
-    tk.Label(head, text=icon, bg=pal["card_bg"], fg=fg,
-             font=(ui_theme.FONT_FAMILY, 20)).pack(side="left")
-    tk.Label(head, text=str(title), bg=pal["card_bg"], fg=pal["text"],
-             font=ui_theme.font(13, bold=True),
-             wraplength=380, justify="left").pack(side="left", padx=10)
+    root = QVBoxLayout(dlg)
+    root.setContentsMargins(0, 0, 0, 14)
+    root.setSpacing(10)
 
-    btns = tk.Frame(win, bg=pal["card_bg"])
-    btns.pack(side="bottom", pady=(8, 14))
-    first = None
-    for text, value, bkind in buttons:
-        b = ttk.Button(btns, text=text,
-                       style=ui_theme.button_style_for(bkind),
-                       command=lambda v=value: choose(v))
-        b.pack(side="left", padx=6)
-        if first is None:
-            first = b
+    strip = QFrame()
+    strip.setFixedHeight(5)
+    strip.setStyleSheet(f"background-color: {fg};")
+    root.addWidget(strip)
 
-    # Long messages (previews, details) scroll inside a bounded box so the buttons always stay
-    # reachable on small screens. The buttons are packed first, at the bottom.
-    msg = str(message)
-    try:
-        sh = root.winfo_screenheight()
-    except Exception:
-        sh = 768
-    max_lines = max(6, min(18, (sh - 360) // 22))
-    if msg.count("\n") + 1 > max_lines or len(msg) > 1100:
-        box = tk.Frame(win, bg=bg)
-        box.pack(fill="both", expand=True, padx=16, pady=(10, 4))
-        sb = ttk.Scrollbar(box, orient="vertical")
-        txt = tk.Text(box, bg=bg, fg=pal["text"], font=ui_theme.font(11), wrap="word",
-                      width=52, height=max_lines, relief="flat", yscrollcommand=sb.set,
-                      padx=12, pady=8, highlightthickness=0)
-        sb.config(command=txt.yview)
-        sb.pack(side="right", fill="y")
-        txt.pack(side="left", fill="both", expand=True)
-        txt.insert("1.0", msg)
-        txt.config(state="disabled")
+    head = QHBoxLayout()
+    head.setContentsMargins(18, 6, 18, 0)
+    head.setSpacing(10)
+    lbl_ico = QLabel(icon)
+    lbl_ico.setFont(ui_theme.qfont(18))
+    lbl_ico.setStyleSheet(f"color: {fg}; background: transparent;")
+    lbl_t = SubtitleLabel(str(title))
+    lbl_t.setWordWrap(True)
+    head.addWidget(lbl_ico)
+    head.addWidget(lbl_t, 1)
+    root.addLayout(head)
+
+    is_long = msg.count("\n") > 10 or len(msg) > 650
+    if is_long:
+        te = TextEdit()
+        te.setReadOnly(True)
+        te.setPlainText(msg)
+        te.setMinimumSize(460, 220)
+        wrap = QVBoxLayout()
+        wrap.setContentsMargins(18, 4, 18, 4)
+        wrap.addWidget(te)
+        root.addLayout(wrap, 1)
     else:
-        tk.Label(win, text=str(message), bg=bg, fg=pal["text"],
-                 font=ui_theme.font(11), wraplength=420, justify="left",
-                 anchor="w", padx=12, pady=8).pack(fill="x", padx=16, pady=(10, 4))
+        lbl_m = BodyLabel(msg)
+        lbl_m.setWordWrap(True)
+        lbl_m.setMinimumWidth(360)
+        lbl_m.setContentsMargins(18, 4, 18, 4)
+        root.addWidget(lbl_m)
 
-    win.protocol("WM_DELETE_WINDOW", win.destroy)
-    win.bind("<Escape>", lambda e: win.destroy())
-    if first is not None:
-        win.bind("<Return>", lambda e: first.invoke())
+    btns = QHBoxLayout()
+    btns.setContentsMargins(18, 4, 18, 0)
+    btns.addStretch(1)
+    result = {"val": False}
 
-    # Centre over the parent/root window.
-    win.update_idletasks()
-    try:
-        rw = root.winfo_width()
-        rh = root.winfo_height()
-        rx = root.winfo_rootx()
-        ry = root.winfo_rooty()
-        ww = win.winfo_reqwidth()
-        wh = win.winfo_reqheight()
-        if rw > 1 and rh > 1:
-            win.geometry("+%d+%d" % (rx + max(0, (rw - ww) // 2),
-                                     ry + max(0, (rh - wh) // 3)))
-    except Exception:
-        pass
-    win.deiconify()
-    if first is not None:
-        first.focus_set()
-    try:
-        win.grab_set()
-    except Exception:
-        pass
-    root.wait_window(win)
-    return result["value"]
+    def accept_choice():
+        result["val"] = True
+        dlg.accept()
 
+    def reject_choice():
+        result["val"] = False
+        dlg.reject()
 
-_FALLBACK = {"info": _mb.showinfo, "success": _mb.showinfo,
-             "warning": _mb.showwarning, "error": _mb.showerror}
+    btn_ok = PrimaryPushButton("نعم" if yes_no else "حسناً")
+    btn_ok.setDefault(True)
+    btn_ok.clicked.connect(accept_choice)
+    btns.addWidget(btn_ok)
+
+    if yes_no:
+        btn_no = PushButton("لا")
+        btn_no.clicked.connect(reject_choice)
+        btns.addWidget(btn_no)
+
+    root.addLayout(btns)
+    ui_theme.fit_dialog_widget(dlg, 560 if is_long else 440, 380 if is_long else 210)
+    dlg.adjustSize()
+    ui_theme.apply_win11_window_style(dlg, _THEME_NAME, _ACCENT)
+    dlg.exec()
+    return result["val"]
 
 
-def _show(kind, title, message, parent=None, **kw):
-    _icon, _col, ok_kind = _KIND_META.get(kind, _KIND_META["info"])
-    try:
-        _run_dialog(title, message, kind, parent,
-                    [("حسناً", "ok", ok_kind)])
-        return "ok"
-    except Exception:
+def showinfo(title, message, parent=None, **_kw):
+    _run_fluent_message(title, message, "info", parent=parent, yes_no=False)
+    return "ok"
+
+
+def showwarning(title, message, parent=None, **_kw):
+    _run_fluent_message(title, message, "warning", parent=parent, yes_no=False)
+    return "ok"
+
+
+def showerror(title, message, parent=None, **_kw):
+    _run_fluent_message(title, message, "error", parent=parent, yes_no=False)
+    return "ok"
+
+
+def askyesno(title, message, parent=None, **_kw):
+    return bool(_run_fluent_message(title, message, "question", parent=parent, yes_no=True))
+
+
+def _ask_input(title, prompt, initialvalue="", mode="str", parent=None):
+    host = _resolve_parent(parent)
+    dlg = QDialog(host)
+    dlg.setWindowTitle(str(title))
+    dlg.setLayoutDirection(Qt.RightToLeft)
+    dlg.setStyleSheet(ui_theme.window_qss(_THEME_NAME, _ACCENT))
+    dlg.setModal(True)
+
+    lay = QVBoxLayout(dlg)
+    lay.setContentsMargins(20, 16, 20, 16)
+    lay.setSpacing(10)
+
+    lbl = BodyLabel(str(prompt))
+    lbl.setWordWrap(True)
+    lay.addWidget(lbl)
+
+    edt = LineEdit()
+    edt.setClearButtonEnabled(True)
+    if initialvalue is not None and str(initialvalue) != "":
+        edt.setText(str(initialvalue))
+        edt.selectAll()
+    lay.addWidget(edt)
+
+    err_lbl = CaptionLabel = QLabel("")
+    err_lbl.setStyleSheet(f"color: {ui_theme.palette(_THEME_NAME, _ACCENT)['danger']};")
+    err_lbl.hide()
+    lay.addWidget(err_lbl)
+
+    btns = QHBoxLayout()
+    btns.addStretch(1)
+    out = {"value": None}
+
+    def on_ok():
+        raw = edt.text()
+        if mode == "str":
+            out["value"] = raw
+            dlg.accept()
+            return
+        txt = raw.strip()
+        if not txt:
+            err_lbl.setText("أدخل رقماً صحيحاً")
+            err_lbl.show()
+            return
         try:
-            _FALLBACK.get(kind, _mb.showinfo)(title, message,
-                                              parent=parent, **kw)
-        except Exception:
-            pass
-        return "ok"
+            out["value"] = int(txt) if mode == "int" else float(txt)
+            dlg.accept()
+        except ValueError:
+            err_lbl.setText("القيمة المدخلة غير صالحة")
+            err_lbl.show()
+
+    btn_ok = PrimaryPushButton("موافق")
+    btn_cancel = PushButton("إلغاء")
+    btn_ok.setDefault(True)
+    btn_ok.clicked.connect(on_ok)
+    btn_cancel.clicked.connect(dlg.reject)
+    edt.returnPressed.connect(on_ok)
+    btns.addWidget(btn_ok)
+    btns.addWidget(btn_cancel)
+    lay.addLayout(btns)
+
+    ui_theme.fit_dialog_widget(dlg, 430, 190)
+    dlg.adjustSize()
+    edt.setFocus()
+    dlg.exec()
+    return out["value"]
 
 
-def showinfo(title, message, parent=None, **kw):
-    return _show("info", title, message, parent=parent, **kw)
+def askstring(title, prompt, initialvalue="", parent=None):
+    return _ask_input(title, prompt, initialvalue=initialvalue, mode="str", parent=parent)
 
 
-def showwarning(title, message, parent=None, **kw):
-    return _show("warning", title, message, parent=parent, **kw)
+def askinteger(title, prompt, initialvalue="", parent=None):
+    return _ask_input(title, prompt, initialvalue=initialvalue, mode="int", parent=parent)
 
 
-def showerror(title, message, parent=None, **kw):
-    return _show("error", title, message, parent=parent, **kw)
+def askfloat(title, prompt, initialvalue="", parent=None):
+    return _ask_input(title, prompt, initialvalue=initialvalue, mode="float", parent=parent)
 
 
-def askyesno(title, message, parent=None, **kw):
-    """Themed نعم/لا dialog.  Escape/close = لا (False), like messagebox."""
-    try:
-        return bool(_run_dialog(
-            title, message, "question", parent,
-            [("نعم", True, "primary"), ("لا", False, "secondary")]))
-    except Exception:
-        try:
-            return bool(_mb.askyesno(title, message, parent=parent, **kw))
-        except Exception:
-            return False
+def get_open_filename(parent=None, title="اختر ملفاً", filetypes=None):
+    flt = _convert_filetypes(filetypes)
+    path, _ = QFileDialog.getOpenFileName(_resolve_parent(parent), title, "", flt)
+    return path or ""
+
+
+def get_save_filename(parent=None, title="حفظ الملف", initialfile="", filetypes=None):
+    flt = _convert_filetypes(filetypes)
+    path, _ = QFileDialog.getSaveFileName(_resolve_parent(parent), title, initialfile or "", flt)
+    return path or ""
+
+
+def _convert_filetypes(filetypes):
+    if not filetypes:
+        return "كل الملفات (*.*)"
+    parts = []
+    for label, pattern in filetypes:
+        pat = " ".join(pattern.split())
+        parts.append(f"{label} ({pat})")
+    return ";;".join(parts)
+
+
+class TextViewerDialog(QDialog):
+    """Clean Fluent read-only text preview dialog with optional action buttons."""
+
+    def __init__(self, parent, title, text, width=680, height=480, monospace=False, extra_buttons=None):
+        super().__init__(_resolve_parent(parent))
+        self.setWindowTitle(title)
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.setStyleSheet(ui_theme.window_qss(_THEME_NAME, _ACCENT))
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        self.editor = TextEdit()
+        self.editor.setReadOnly(True)
+        if monospace:
+            self.editor.setFont(ui_theme.qfont(10, family="Consolas"))
+        self.editor.setPlainText(text)
+        lay.addWidget(self.editor, 1)
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        if extra_buttons:
+            for label, cb, is_primary in extra_buttons:
+                btn = PrimaryPushButton(label) if is_primary else PushButton(label)
+                btn.clicked.connect(lambda _c=False, fn=cb: fn(self))
+                btns.addWidget(btn)
+        btn_close = PushButton("إغلاق")
+        btn_close.clicked.connect(self.close)
+        btns.addWidget(btn_close)
+        lay.addLayout(btns)
+
+        ui_theme.fit_dialog_widget(self, width, height)

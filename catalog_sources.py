@@ -30,16 +30,39 @@ def open_source(url):
     return webbrowser.open(url)
 
 
-def build_notice(parent):
-    """Scrollable settings owns layout; this section never starts a sync."""
-    from tkinter import ttk
-    frame = ttk.LabelFrame(parent, text="مصادر الكتالوج وترخيص البيانات", padding=10)
-    frame.pack(fill="x", anchor="w", pady=8)
-    ttk.Label(frame, text=AR_NOTICE, wraplength=620, justify="right").pack(anchor="w", fill="x")
-    ttk.Label(frame, text=ATTRIBUTION, wraplength=620, justify="left").pack(anchor="w", fill="x", pady=5)
-    ttk.Label(frame, text=AR_LIMITS, wraplength=620, justify="right").pack(anchor="w", fill="x", pady=4)
-    links = ttk.Frame(frame)
-    links.pack(anchor="w", pady=4)
+def build_notice(parent_layout):
+    """Build Fluent CardWidget source/license notice inside parent QLayout."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
+    from qfluentwidgets import BodyLabel, CaptionLabel, CardWidget, PushButton, StrongBodyLabel
+
+    card = CardWidget()
+    lay = QVBoxLayout(card)
+    lay.setContentsMargins(14, 12, 14, 12)
+    lay.setSpacing(6)
+
+    lay.addWidget(StrongBodyLabel("مصادر الكتالوج وترخيص البيانات"))
+    n_lbl = BodyLabel(AR_NOTICE)
+    n_lbl.setWordWrap(True)
+    lay.addWidget(n_lbl)
+
+    a_lbl = CaptionLabel(ATTRIBUTION)
+    a_lbl.setWordWrap(True)
+    a_lbl.setAlignment(Qt.AlignLeft)
+    lay.addWidget(a_lbl)
+
+    l_lbl = CaptionLabel(AR_LIMITS)
+    l_lbl.setWordWrap(True)
+    lay.addWidget(l_lbl)
+
+    links = QHBoxLayout()
+    links.setSpacing(8)
     for title, url in SOURCES:
-        ttk.Button(links, text=title, command=lambda u=url: open_source(u)).pack(side="left", padx=(0, 6))
-    return frame
+        b = PushButton(title)
+        b.clicked.connect(lambda _c=False, u=url: open_source(u))
+        links.addWidget(b)
+    links.addStretch(1)
+    lay.addLayout(links)
+
+    parent_layout.addWidget(card)
+    return card
