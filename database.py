@@ -1392,19 +1392,44 @@ class DB:
         return c.lastrowid
 
     # ---------- drugs / barcode ----------
+    def _search_index(self):
+        """Normalized in-memory index of active drugs (see search_util). Rebuilt when the table changes."""
+        import search_util
+        key = (self.conn.execute("PRAGMA data_version").fetchone()[0], self.conn.total_changes,
+               tuple(self.conn.execute("SELECT count(*), coalesce(max(id),0) FROM drugs WHERE active=1").fetchone()))
+        cached = getattr(self, "_sidx", None)
+        if cached is None or cached[0] != key:
+            rows = self.conn.execute("SELECT id, trade_en, trade_ar, scientific, company FROM drugs WHERE active=1").fetchall()
+            cached = (key, search_util.Index([tuple(r) for r in rows]))
+            self._sidx = cached
+        return cached[1]
+
     def search_drugs(self, query="", limit=100):
-        q = "%" + (query or "").strip() + "%"
-        # spaces are ignored on both sides, so "lightvel" finds "light vel cream" and vice versa
-        qn = "%" + "".join((query or "").split()) + "%"
-        if not query.strip():
+        """Spaces, Arabic spelling variants (alef/yeh/teh marbuta/tashkeel) and small typos are tolerated.
+        Order: starts-with, contains, all words, then typo matches. Falls back to plain LIKE on any error."""
+        if not (query or "").strip():
             rows = self.conn.execute(
                 "SELECT * FROM drugs WHERE active=1 ORDER BY trade_en LIMIT ?", (limit,)).fetchall()
-        else:
-            rows = self.conn.execute(
-                """SELECT * FROM drugs WHERE active=1 AND
-                (trade_en LIKE ? OR trade_ar LIKE ? OR scientific LIKE ? OR company LIKE ?
-                 OR REPLACE(trade_en,' ','') LIKE ? OR REPLACE(trade_ar,' ','') LIKE ?)
-                ORDER BY trade_en LIMIT ?""", (q, q, q, q, qn, qn, limit)).fetchall()
+            return self._drugs_with_stock(rows)
+        try:
+            ids = self._search_index().search(query, limit)
+            rows = []
+            for start in range(0, len(ids), 900):
+                chunk = ids[start:start + 900]
+                got = {r["id"]: r for r in self.conn.execute(
+                    "SELECT * FROM drugs WHERE active=1 AND id IN (%s)" % ",".join("?" * len(chunk)), chunk).fetchall()}
+                rows.extend(got[i] for i in chunk if i in got)
+            if rows:
+                return self._drugs_with_stock(rows)
+        except Exception:
+            pass
+        q = "%" + query.strip() + "%"
+        qn = "%" + "".join(query.split()) + "%"
+        rows = self.conn.execute(
+            """SELECT * FROM drugs WHERE active=1 AND
+            (trade_en LIKE ? OR trade_ar LIKE ? OR scientific LIKE ? OR company LIKE ?
+             OR REPLACE(trade_en,' ','') LIKE ? OR REPLACE(trade_ar,' ','') LIKE ?)
+            ORDER BY trade_en LIMIT ?""", (q, q, q, q, qn, qn, limit)).fetchall()
         return self._drugs_with_stock(rows)
 
     def drugs_by_ids(self, drug_ids):
