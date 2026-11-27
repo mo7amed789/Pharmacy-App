@@ -1394,14 +1394,17 @@ class DB:
     # ---------- drugs / barcode ----------
     def search_drugs(self, query="", limit=100):
         q = "%" + (query or "").strip() + "%"
+        # spaces are ignored on both sides, so "lightvel" finds "light vel cream" and vice versa
+        qn = "%" + "".join((query or "").split()) + "%"
         if not query.strip():
             rows = self.conn.execute(
                 "SELECT * FROM drugs WHERE active=1 ORDER BY trade_en LIMIT ?", (limit,)).fetchall()
         else:
             rows = self.conn.execute(
                 """SELECT * FROM drugs WHERE active=1 AND
-                (trade_en LIKE ? OR trade_ar LIKE ? OR scientific LIKE ? OR company LIKE ?)
-                ORDER BY trade_en LIMIT ?""", (q, q, q, q, limit)).fetchall()
+                (trade_en LIKE ? OR trade_ar LIKE ? OR scientific LIKE ? OR company LIKE ?
+                 OR REPLACE(trade_en,' ','') LIKE ? OR REPLACE(trade_ar,' ','') LIKE ?)
+                ORDER BY trade_en LIMIT ?""", (q, q, q, q, qn, qn, limit)).fetchall()
         return self._drugs_with_stock(rows)
 
     def drugs_by_ids(self, drug_ids):
