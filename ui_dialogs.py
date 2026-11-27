@@ -68,6 +68,7 @@ def _run_dialog(title, message, kind, parent, buttons):
     win.title(str(title))
     win.configure(bg=pal["card_bg"])
     win.resizable(False, False)
+    ui_theme.apply_win11_window_style(win, _THEME_NAME, _ACCENT)
     try:
         win.transient(root)
     except Exception:

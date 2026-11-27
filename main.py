@@ -251,12 +251,13 @@ class LoginWindow:
         ui_theme.center_window(self.root, 430, 400)
         self.root.resizable(False, False)
         _style = ttk.Style()
-        _lpal = ui_theme.apply_theme(
-            self.root, _style, ui_theme.get_theme_name(db),
-            db.get_setting("ui_accent", "teal"))
-        ui_dialogs.set_theme(ui_theme.get_theme_name(db),
-                             db.get_setting("ui_accent", "teal"))
-        ttk.Label(self.root, text="💊 Pharmacy Enterprise", font=("Segoe UI", 22, "bold")).pack(pady=(16, 2))
+        _ltheme = ui_theme.get_theme_name(db)
+        _lacc = db.get_setting("ui_accent", "teal")
+        _lpal = ui_theme.apply_theme(self.root, _style, _ltheme, _lacc)
+        ui_dialogs.set_theme(_ltheme, _lacc)
+        ui_theme.apply_win11_window_style(self.root, _ltheme, _lacc)
+        tk.Frame(self.root, bg=_lpal["accent"], height=4).pack(fill="x")
+        ttk.Label(self.root, text="💊 Pharmacy Enterprise", font=("Segoe UI", 22, "bold")).pack(pady=(14, 2))
         try:
             _pn = db.conn.execute("SELECT value FROM settings WHERE key='pharmacy_name'").fetchone()
             _pname = _pn["value"] if _pn and _pn["value"] else "صيدلية المؤسسة"
@@ -281,7 +282,7 @@ class LoginWindow:
         # v5.1: notice line (e.g. after cancelling the forced password
         # change) — shown in red so a return to the login screen is
         # never mistaken for a silent failure.
-        self.lbl_notice = tk.Label(self.root, text=self.notice, fg=_lpal["danger"],
+        self.lbl_notice = tk.Label(self.root, text=self.notice, bg=_lpal["bg"], fg=_lpal["danger"],
                                    font=("Segoe UI", 10, "bold"), wraplength=360,
                                    justify="center")
         if self.notice:
@@ -519,6 +520,7 @@ class App:
         style = ttk.Style()
         self.pal = ui_theme.apply_theme(root, style, self.theme_name, self.ui_accent, self.ui_font_delta)
         ui_dialogs.set_theme(self.theme_name, self.ui_accent)
+        ui_theme.apply_win11_window_style(root, self.theme_name, self.ui_accent, use_header_tint=True)
         # ----- top bar (every screen) -----
         self.topbar = tk.Frame(root, bg=self.pal["header_bg"], height=52)
         self.topbar.pack(fill="x")
@@ -582,10 +584,17 @@ class App:
         self.held = []          # held invoices: list of carts
         self.purchase_lines = []
         self.current_shift = self.db.open_shift_for(self.username)
-        self.notebook = ttk.Notebook(root)
+        self._workspace = tk.Frame(root, bg=self.pal["bg"])
+        self._workspace.pack(fill="both", expand=True)
+        self.nav_rail = tk.Frame(self._workspace, bg=self.pal["card_bg"], width=204)
+        self.nav_rail.pack(side="right", fill="y")
+        self.nav_rail.pack_propagate(False)
+        self._nav_sep = tk.Frame(self._workspace, bg=self.pal["border"], width=1)
+        self._nav_sep.pack(side="right", fill="y")
+        self.notebook = ttk.Notebook(self._workspace, style="Nav.TNotebook")
         # v6.20: Fluent margins — content breathes instead of touching
         # the window edges.
-        self.notebook.pack(fill="both", expand=True, padx=10, pady=8)
+        self.notebook.pack(side="left", fill="both", expand=True, padx=10, pady=8)
         self.mobile_server = None
         # v6.14: lazy tabs — only the dashboard builds at startup; every
         # other tab is a placeholder frame until first opened, so the
@@ -618,6 +627,7 @@ class App:
             except Exception:
                 pass
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        self._build_nav_rail()
         # Thread-safe UI queue: background threads (hotspot / server)
         # must NEVER call Tk methods directly — Python 3.12 raises
         # "main thread is not in main loop". They post callables here
@@ -849,10 +859,12 @@ class App:
         ui_theme.set_theme_name(self.db, theme_name)
         self.pal = ui_theme.apply_theme(self.root, ttk.Style(), theme_name, self.ui_accent, self.ui_font_delta)
         ui_dialogs.set_theme(theme_name, self.ui_accent)
+        ui_theme.apply_win11_window_style(self.root, theme_name, self.ui_accent, use_header_tint=True)
         try:
             self.topbar.configure(bg=self.pal["header_bg"])
             if hasattr(self, "_topbar_accent"):
                 self._topbar_accent.configure(bg=self.pal["accent"])
+            self._recolor_nav_rail()
             for w in (self.lbl_top_pharmacy, self.lbl_top_user, self.lbl_top_shift):
                 w.configure(bg=self.pal["header_bg"])
             self.btn_theme.configure(text="🌙 داكن" if theme_name == "light" else "☀️ فاتح",
@@ -923,6 +935,83 @@ class App:
     # Admin sees every tab. Edit EMPLOYEE_HIDDEN_TABS to change this.
     EMPLOYEE_HIDDEN_TABS = (3, 5, 7, 8)
 
+    def _build_nav_rail(self):
+        """Windows 11 NavigationView sidebar driving self.notebook."""
+        self._nav_items = {}
+        self._nav_active = 0
+        hidden = set(self.hidden_tabs())
+        items = [
+            (0, "🏠", "الرئيسية"),
+            (1, "🛒", "الكاشير (POS)"),
+            (2, "📦", "المخزون"),
+            (3, "🧾", "المشتريات والموردين"),
+            (4, "👥", "العملاء"),
+            (5, "📊", "التقارير"),
+            (6, "💰", "الخزنة والورديات"),
+            (8, "🤖", "التنبؤ الذكي"),
+            (9, "📱", "الموبايل والطباعة"),
+            (7, "⚙️", "الإعدادات"),
+        ]
+        tk.Label(self.nav_rail, text="التنقل", bg=self.pal["card_bg"],
+                 fg=self.pal["muted"], font=ui_theme.font(9, bold=True),
+                 anchor="e", padx=14, pady=8).pack(fill="x", pady=(6, 2))
+        for idx, icon, label in items:
+            if idx in hidden:
+                continue
+            is_bottom = (idx == 7)
+            row = tk.Frame(self.nav_rail, bg=self.pal["card_bg"], cursor="hand2")
+            if is_bottom:
+                row.pack(side="bottom", fill="x", padx=8, pady=(2, 10))
+            else:
+                row.pack(side="top", fill="x", padx=8, pady=2)
+            pill = tk.Frame(row, bg=self.pal["card_bg"], width=4)
+            pill.pack(side="right", fill="y", pady=6)
+            btn = tk.Label(row, text=f"{label}  {icon}", bg=self.pal["card_bg"],
+                           fg=self.pal["text"], font=ui_theme.font(11, bold=(idx == 0)),
+                           anchor="e", padx=10, pady=8, cursor="hand2")
+            btn.pack(side="right", fill="both", expand=True)
+            for w in (row, btn, pill):
+                w.bind("<Button-1>", lambda _e, i=idx: self.goto_tab(i))
+                w.bind("<Enter>", lambda _e, i=idx: self._nav_hover(i, True))
+                w.bind("<Leave>", lambda _e, i=idx: self._nav_hover(i, False))
+            self._nav_items[idx] = (row, pill, btn)
+        self._sync_nav_rail(0)
+
+    def _nav_hover(self, idx, entering):
+        if idx == getattr(self, "_nav_active", 0):
+            return
+        item = getattr(self, "_nav_items", {}).get(idx)
+        if not item:
+            return
+        row, pill, btn = item
+        bg = self.pal["row_alt"] if entering else self.pal["card_bg"]
+        row.configure(bg=bg)
+        pill.configure(bg=bg)
+        btn.configure(bg=bg)
+
+    def _sync_nav_rail(self, active_idx):
+        self._nav_active = active_idx
+        for idx, (row, pill, btn) in getattr(self, "_nav_items", {}).items():
+            sel = (idx == active_idx)
+            bg = self.pal["selected_bg"] if sel else self.pal["card_bg"]
+            fg = self.pal["accent"] if sel else self.pal["text"]
+            pcol = self.pal["accent"] if sel else bg
+            row.configure(bg=bg)
+            pill.configure(bg=pcol)
+            btn.configure(bg=bg, fg=fg, font=ui_theme.font(11, bold=sel))
+
+    def _recolor_nav_rail(self):
+        if hasattr(self, "_workspace"):
+            self._workspace.configure(bg=self.pal["bg"])
+        if hasattr(self, "nav_rail"):
+            self.nav_rail.configure(bg=self.pal["card_bg"])
+            for w in self.nav_rail.winfo_children():
+                if isinstance(w, tk.Label):
+                    w.configure(bg=self.pal["card_bg"], fg=self.pal["muted"])
+        if hasattr(self, "_nav_sep"):
+            self._nav_sep.configure(bg=self.pal["border"])
+        self._sync_nav_rail(getattr(self, "_nav_active", 0))
+
     def hidden_tabs(self):
         return () if self.is_admin else self.EMPLOYEE_HIDDEN_TABS
 
@@ -933,6 +1022,7 @@ class App:
         try:
             self._ensure_tab(index)
             self.notebook.select(index)
+            self._sync_nav_rail(index)
         except Exception:
             pass
 
@@ -984,6 +1074,7 @@ class App:
                 self.notebook.select(0)
                 return
             self._ensure_tab(idx)
+            self._sync_nav_rail(idx)
             if idx == 0:
                 self.refresh_dashboard()
             elif idx == 9:

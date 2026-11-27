@@ -303,8 +303,15 @@ def set_theme_name(db, theme_name):
 
 
 # ---------------------------------------------------------------- styling
+_LAST_THEME = "dark"
+_LAST_ACCENT = "teal"
+
+
 def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
     """Configure every ttk style for the palette. Safe to call twice."""
+    global _LAST_THEME, _LAST_ACCENT
+    _LAST_THEME = theme_name
+    _LAST_ACCENT = accent
     set_font_scale(font_scale)
     resolve_font_family(root)
     p = palette(theme_name, accent)
@@ -378,15 +385,21 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
     style.configure("TEntry", font=font(12), fieldbackground=p["input_bg"],
                     foreground=p["text"], insertcolor=p["text"],
                     bordercolor=p["border"], lightcolor=p["border"],
-                    darkcolor=p["border"], padding=(6, 5))
-    style.configure("TCombobox", font=font(11), padding=(6, 5),
+                    darkcolor=p["border"], padding=(8, 6))
+    style.map("TEntry",
+              bordercolor=[("focus", p["accent"]), ("active", p["muted"])],
+              lightcolor=[("focus", p["accent"])],
+              darkcolor=[("focus", p["accent"])])
+    style.configure("TCombobox", font=font(11), padding=(8, 6),
                     fieldbackground=p["input_bg"], foreground=p["text"],
                     background=p["card_bg"], bordercolor=p["border"],
                     lightcolor=p["border"], darkcolor=p["border"],
                     insertcolor=p["text"])
     style.map("TCombobox",
               fieldbackground=[("readonly", p["input_bg"])],
-              foreground=[("readonly", p["text"])])
+              foreground=[("readonly", p["text"])],
+              bordercolor=[("focus", p["accent"]), ("active", p["muted"])],
+              lightcolor=[("focus", p["accent"])])
     style.configure("TRadiobutton", background=p["bg"],
                     foreground=p["text"], font=font(11))
     style.configure("TCheckbutton", background=p["bg"],
@@ -400,6 +413,11 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
               background=[("selected", p["card_bg"]), ("active", p["row_alt"]), ("!selected", p["bg"])],
               foreground=[("selected", p["accent"]), ("active", p["text"]), ("!selected", p["muted"])],
               expand=[("selected", (1, 1, 1, 0))])
+    style.configure("Nav.TNotebook", background=p["bg"], borderwidth=0, tabmargins=0)
+    try:
+        style.layout("Nav.TNotebook.Tab", [])
+    except Exception:
+        pass
     # v6.20: Fluent tables — a quiet header row (muted text on the
     # surface colour with a hairline border) instead of a heavy
     # coloured bar; the data is the loud part, not the chrome.
@@ -711,6 +729,56 @@ import re as _re
 _GEOMETRY_RE = _re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
 
 
+def _hex_to_colorref(hex_color):
+    """Convert #RRGGBB to Win32 COLORREF (0x00BBGGRR)."""
+    h = str(hex_color or "").lstrip("#")
+    if len(h) != 6:
+        return 0
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (b << 16) | (g << 8) | r
+
+
+def apply_win11_window_style(win, theme_name=None, accent=None, use_header_tint=False):
+    """Apply native Windows 11 DWM title-bar, rounded corners & border tint.
+
+    Safe no-op on Linux, headless tests, or older Windows builds.
+    """
+    try:
+        import sys
+        if sys.platform != "win32" or win is None:
+            return
+        import ctypes
+        tname = theme_name or _LAST_THEME
+        acc = accent or _LAST_ACCENT
+        p = palette(tname, acc)
+        win.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id()) or win.winfo_id()
+        if not hwnd:
+            return
+        dwm = ctypes.windll.dwmapi
+        dark_val = ctypes.c_int(1 if tname == "dark" or use_header_tint else 0)
+        for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (Win11 / Win10 1903+)
+            try:
+                dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(dark_val), ctypes.sizeof(dark_val))
+            except Exception:
+                pass
+        # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2
+        corner = ctypes.c_int(2)
+        dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
+        # DWMWA_BORDER_COLOR = 34
+        border = ctypes.c_int(_hex_to_colorref(p["border"]))
+        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))
+        # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36 (Win11 22H2+)
+        cap_hex = p["header_bg"] if use_header_tint else p["bg"]
+        txt_hex = "#FFFFFF" if (tname == "dark" or use_header_tint) else p["text"]
+        cap = ctypes.c_int(_hex_to_colorref(cap_hex))
+        txt = ctypes.c_int(_hex_to_colorref(txt_hex))
+        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), ctypes.sizeof(cap))
+        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), ctypes.sizeof(txt))
+    except Exception:
+        pass
+
+
 def center_window(win, w, h):
     """Centre a window on the screen at the given size (safe no-op)."""
     try:
@@ -720,6 +788,7 @@ def center_window(win, w, h):
         x = max(0, (sw - w) // 2)
         y = max(0, (sh - h) // 2)
         win.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        apply_win11_window_style(win)
     except Exception:
         pass
 
@@ -817,6 +886,7 @@ def fit_dialog(win, w, h, margin_x=60, margin_y=110):
         x = max(0, (sw - w) // 2)
         y = max(0, (sh - h) // 2)
         win.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        apply_win11_window_style(win)
         return w, h
     except Exception:
         try:
