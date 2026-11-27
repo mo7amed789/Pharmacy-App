@@ -3274,7 +3274,7 @@ class DB:
         return len(rows)
 
     @_atomic
-    def import_drugs_csv(self, path, user=""):
+    def import_drugs_csv(self, path, user="", keep_existing_prices=True):
         """v5.0: the WHOLE file is validated first (bad row = nothing
         imported, with the row number in the error), then all rows are
         written in ONE transaction — a bad file can no longer leave a
@@ -3318,13 +3318,33 @@ class DB:
                 except Exception:
                     raise ValueError("خطأ في السطر %d (%s): قيمة رقمية غير صالحة" % (lineno, name))
                 parsed.append(fields)
+        try:     # automatic safety copy before anything is written
+            self.backup("_pre_import")
+        except Exception:
+            pass
         added, updated = 0, 0
         for fields in parsed:
             existing = self.conn.execute(
                 "SELECT id FROM drugs WHERE trade_en=? AND strength=?",
                 (fields["trade_en"], fields["strength"])).fetchone()
             if existing:
-                self.update_drug(existing["id"], fields, _commit=False)
+                # Safe re-import: a catalog row must never overwrite what the pharmacy already holds.
+                # Real costs, edited selling prices and stock limits stay; a missing (0) price is filled in.
+                cur = self.conn.execute("SELECT * FROM drugs WHERE id=?", (existing["id"],)).fetchone()
+                keep = dict(fields)
+                if keep_existing_prices:
+                    keep["buy_price"] = cur["buy_price"]
+                    keep["min_stock"] = cur["min_stock"]
+                    if (cur["sell_price"] or 0) > 0:
+                        keep["sell_price"] = cur["sell_price"]
+                    for k in ("trade_ar", "scientific", "company", "form", "category"):
+                        if not (fields.get(k) or "").strip():
+                            keep[k] = cur[k] or ""
+                    keep["strips_per_box"] = cur["strips_per_box"]
+                    keep["tablets_per_strip"] = cur["tablets_per_strip"]
+                    keep["discount_type"] = cur["discount_type"] or "none"
+                    keep["discount_value"] = cur["discount_value"] or 0
+                self.update_drug(existing["id"], keep, _commit=False)
                 if fields["barcode"]:
                     # v5.7: a barcode that belongs to another drug is
                     # now an error, not a silently dropped row.
