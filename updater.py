@@ -51,7 +51,8 @@ def local_git_sha(base_dir=None):
         return ""
     try:
         out = subprocess.run(["git", "-C", base_dir, "rev-parse", "HEAD"],
-                             capture_output=True, text=True, timeout=5)
+                             capture_output=True, text=True, timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         sha = out.stdout.strip()
         return sha if out.returncode == 0 and len(sha) == 40 and all(c in "0123456789abcdef" for c in sha) else ""
     except (OSError, subprocess.SubprocessError):

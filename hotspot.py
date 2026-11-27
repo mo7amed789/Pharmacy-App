@@ -152,7 +152,8 @@ def _run_ps(action, extra_args=None, timeout=40):
     log("run: %s" % " ".join(cmd))
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=timeout,
-                              text=True, encoding="utf-8", errors="replace")
+                              text=True, encoding="utf-8", errors="replace",
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         log("timeout after %ds: %s" % (timeout, action))
         return False, "", "انتهت المهلة أثناء تنفيذ أمر الهوت سبوت (أكثر من %d ثانية)." % timeout
@@ -207,7 +208,8 @@ def check_hotspot_support():
     try:
         proc = subprocess.run(["netsh", "wlan", "show", "drivers"],
                               capture_output=True, timeout=15,
-                              text=True, encoding="utf-8", errors="replace")
+                              text=True, encoding="utf-8", errors="replace",
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         m = re.search(r"Hosted network supported\s*:\s*(\w+)",
                       proc.stdout or "", re.IGNORECASE)
         if m:

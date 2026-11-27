@@ -148,7 +148,8 @@ def _parse_ipconfig_windows():
     out = []
     try:
         proc = subprocess.run(["ipconfig"], capture_output=True, timeout=10,
-                              text=True, encoding="utf-8", errors="replace")
+                              text=True, encoding="utf-8", errors="replace",
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         adapter = ""
         for line in (proc.stdout or "").splitlines():
             m = re.match(r"\s*(.+?) adapter (.+):\s*$", line, re.IGNORECASE)
@@ -403,7 +404,8 @@ def _generate_cert_powershell(ips, cert_path, key_path):
                  "-ExecutionPolicy", "Bypass", "-File", script_path,
                  "-Ips", ",".join(ips),
                  "-CertOut", cert_path, "-KeyOut", key_path],
-                capture_output=True, timeout=120, text=True)
+                capture_output=True, timeout=120, text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if (r.returncode == 0 and os.path.isfile(cert_path)
                     and os.path.isfile(key_path)):
                 return True, "PowerShell (%s)" % exe
@@ -469,7 +471,8 @@ def regenerate_cert(ips, base_dir):
                  "-keyout", key_tmp, "-out", cert_tmp, "-days", "3650",
                  "-nodes", "-subj", "/CN=%s" % cn,
                  "-addext", "subjectAltName=%s" % san],
-                capture_output=True, timeout=60, text=True)
+                capture_output=True, timeout=60, text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if r.returncode != 0 or not (os.path.isfile(cert_tmp) and os.path.isfile(key_tmp)):
                 return False, "فشل توليد الشهادة: %s" % (r.stderr or "")[:200]
             method = "openssl"

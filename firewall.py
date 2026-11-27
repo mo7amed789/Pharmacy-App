@@ -137,7 +137,8 @@ def _run_netsh(args, timeout=20):
     log("run: %s" % " ".join(cmd))
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=timeout,
-                              text=True, encoding="utf-8", errors="replace")
+                              text=True, encoding="utf-8", errors="replace",
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         log("netsh timeout: %s" % " ".join(args))
         return False, "", "انتهت المهلة أثناء تنفيذ أمر جدار الحماية."

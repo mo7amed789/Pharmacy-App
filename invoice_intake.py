@@ -322,7 +322,8 @@ def ocr_image(path, provider=None, lang="en-US"):
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1,
                  "-Path", os.path.abspath(path), "-Lang", lang],
-                capture_output=True, text=True, timeout=90, encoding="utf-8", errors="replace")
+                capture_output=True, text=True, timeout=90, encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         finally:
             try:
                 os.remove(ps1)
@@ -332,7 +333,8 @@ def ocr_image(path, provider=None, lang="en-US"):
             raise OcrUnavailable("فشل Windows OCR: " + (r.stderr or "").strip()[:200])
         return r.stdout
     r = subprocess.run(["tesseract", os.path.abspath(path), "stdout", "--psm", "6"],
-                       capture_output=True, text=True, timeout=90, encoding="utf-8", errors="replace")
+                       capture_output=True, text=True, timeout=90, encoding="utf-8", errors="replace",
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if r.returncode != 0:
         raise OcrUnavailable("فشل Tesseract: " + (r.stderr or "").strip()[:200])
     return r.stdout
