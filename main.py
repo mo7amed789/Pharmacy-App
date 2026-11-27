@@ -6129,7 +6129,7 @@ class App:
         except Exception as e:
             messagebox.showerror("خطأ في الاستيراد", str(e))
             return
-        messagebox.showinfo("تم", "تم الاستيراد: %d جديد، %d محدّث" % (added, updated))
+        messagebox.showinfo("تم", "تم الاستيراد: %d صنف جديد، %d موجود بالفعل (لم تتغير أسعار الشراء والبيع ولا حد الطلب لديك). أخذنا نسخة احتياطية قبل الاستيراد." % (added, updated))
         self.inv_refresh()
         self.pos_search_refresh()
 
