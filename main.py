@@ -539,25 +539,43 @@ class App:
         # Right-side buttons are packed in priority order: the first one packed
         # is the last to be clipped on a narrow window, so account actions come
         # first and the shortcuts button last.
+        def _bind_top_hover(btn):
+            base_bg = self.pal["header_bg2"]
+            hover_bg = self.pal["accent"]
+            btn.configure(cursor="hand2", padx=10, pady=3, bd=0,
+                          activebackground=hover_bg, activeforeground="#FFFFFF")
+            btn.bind("<Enter>", lambda _e, b=btn, c=hover_bg: b.configure(bg=c))
+            btn.bind("<Leave>", lambda _e, b=btn, c=base_bg: b.configure(bg=c))
+
         if not self.is_admin:
-            tk.Button(self.topbar, text="🔑 كلمتي", bg=self.pal["header_bg2"], fg="#FFFFFF",
-                      font=("Segoe UI", 10, "bold"), relief="flat",
-                      command=self.change_password_dialog).pack(side="right", padx=4, pady=8)
-        tk.Button(self.topbar, text="🕒 الحضور", bg=self.pal["header_bg2"], fg="#FFFFFF",
-                  font=("Segoe UI", 10, "bold"), relief="flat",
-                  command=self.attendance_dialog).pack(side="right", padx=4, pady=8)
+            _b = tk.Button(self.topbar, text="🔑 كلمتي", bg=self.pal["header_bg2"], fg="#FFFFFF",
+                           font=("Segoe UI", 10, "bold"), relief="flat",
+                           command=self.change_password_dialog)
+            _b.pack(side="right", padx=4, pady=8)
+            _bind_top_hover(_b)
+        _b = tk.Button(self.topbar, text="🕒 الحضور", bg=self.pal["header_bg2"], fg="#FFFFFF",
+                       font=("Segoe UI", 10, "bold"), relief="flat",
+                       command=self.attendance_dialog)
+        _b.pack(side="right", padx=4, pady=8)
+        _bind_top_hover(_b)
         self._build_branch_selector()
         self.btn_theme = tk.Button(self.topbar, text="🌙 داكن" if self.theme_name == "light" else "☀️ فاتح",
                                    bg=self.pal["header_bg2"], fg="#FFFFFF",
                                    font=("Segoe UI", 10, "bold"), relief="flat",
                                    command=self.toggle_theme)
         self.btn_theme.pack(side="right", padx=4, pady=8)
-        tk.Button(self.topbar, text="❓ (F1)", bg=self.pal["header_bg2"],
-                  fg="#FFFFFF", font=("Segoe UI", 10, "bold"), relief="flat",
-                  command=self.show_shortcuts).pack(side="right", padx=4, pady=8)
+        _bind_top_hover(self.btn_theme)
+        _b = tk.Button(self.topbar, text="❓ (F1)", bg=self.pal["header_bg2"],
+                       fg="#FFFFFF", font=("Segoe UI", 10, "bold"), relief="flat",
+                       command=self.show_shortcuts)
+        _b.pack(side="right", padx=4, pady=8)
+        _bind_top_hover(_b)
+        self._topbar_accent = tk.Frame(root, bg=self.pal["accent"], height=2)
+        self._topbar_accent.pack(fill="x")
         # ----- status banner (coloured success/error/info) -----
         self.banner = ui_theme.make_banner(root, "جاهز — اختر تبويباً أو ابدأ البيع من الكاشير.", "info", self.theme_name)
         self.banner.pack(fill="x")
+        self._debounce_jobs = {}
         self.cart = []          # POS cart: dicts {drug, pack_level, qty_display}
         self.held = []          # held invoices: list of carts
         self.purchase_lines = []
@@ -800,6 +818,19 @@ class App:
         except Exception:
             pass
 
+    def _debounce(self, key, ms, fn):
+        """Schedule fn after ms milliseconds, cancelling any pending call for key."""
+        prev = self._debounce_jobs.pop(key, None)
+        if prev is not None:
+            try:
+                self.root.after_cancel(prev)
+            except Exception:
+                pass
+        def _run():
+            self._debounce_jobs.pop(key, None)
+            fn()
+        self._debounce_jobs[key] = self.root.after(ms, _run)
+
     def toggle_theme(self):
         self.apply_theme_now("dark" if self.theme_name == "light" else "light")
 
@@ -818,6 +849,8 @@ class App:
         ui_dialogs.set_theme(theme_name, self.ui_accent)
         try:
             self.topbar.configure(bg=self.pal["header_bg"])
+            if hasattr(self, "_topbar_accent"):
+                self._topbar_accent.configure(bg=self.pal["accent"])
             for w in (self.lbl_top_pharmacy, self.lbl_top_user, self.lbl_top_shift):
                 w.configure(bg=self.pal["header_bg"])
             self.btn_theme.configure(text="🌙 داكن" if theme_name == "light" else "☀️ فاتح",
@@ -1357,7 +1390,8 @@ class App:
         ttk.Label(top, text="بحث بالاسم / المادة الفعالة:").pack(side="left", padx=(14, 2))
         self.e_search = ttk.Entry(top, width=22, font=("Segoe UI", 12))
         self.e_search.pack(side="left")
-        self.e_search.bind("<KeyRelease>", lambda e: self.pos_search_refresh())
+        self.e_search.bind("<KeyRelease>", lambda e: self._debounce("pos_search", 120, self.pos_search_refresh))
+        self.e_search.bind("<Return>", lambda e: self.pos_search_refresh())
         ttk.Button(top, text="بحث", command=self.pos_search_refresh).pack(side="left", padx=4)
         ttk.Label(tab, text="F2 للانتقال للباركود  •  F9 لإتمام البيع  •  F1 للاختصارات  •  اضغط مرتين على الدواء لإضافته للفاتورة",
                   style="Muted.TLabel").pack(anchor="w", padx=12)
@@ -1852,7 +1886,8 @@ class App:
         ttk.Label(top, text="بحث:").pack(side="left")
         self.e_inv_search = ttk.Entry(top, width=30)
         self.e_inv_search.pack(side="left", padx=4)
-        self.e_inv_search.bind("<KeyRelease>", lambda e: self.inv_refresh())
+        self.e_inv_search.bind("<KeyRelease>", lambda e: self._debounce("inv_search", 130, self.inv_refresh))
+        self.e_inv_search.bind("<Return>", lambda e: self.inv_refresh())
         ttk.Button(top, text="تحديث", command=self.inv_refresh).pack(side="left", padx=4)
         ttk.Button(top, text="➕ إضافة دواء", command=lambda: self.drug_dialog()).pack(side="left", padx=4)
         ttk.Button(top, text="✏️ تعديل الدواء المحدد", command=self.drug_edit_selected).pack(side="left", padx=4)
@@ -1893,9 +1928,14 @@ class App:
         # empty — the barcode lives in the drug_barcode table).
         barcodes = {}
         try:
-            for r in self.db.conn.execute(
-                    "SELECT drug_id, barcode FROM barcodes WHERE pack_level='box'"):
-                barcodes.setdefault(r["drug_id"], r["barcode"])
+            inv_ids = [d["id"] for d in self.inv_rows]
+            for start in range(0, len(inv_ids), 900):
+                chunk = inv_ids[start:start + 900]
+                marks = ",".join("?" * len(chunk))
+                for r in self.db.conn.execute(
+                        "SELECT drug_id, barcode FROM barcodes WHERE pack_level='box' AND drug_id IN (%s)" % marks,
+                        chunk):
+                    barcodes.setdefault(r["drug_id"], r["barcode"])
         except Exception:
             pass
         for d in self.inv_rows:
@@ -2446,7 +2486,8 @@ class App:
         row.pack(fill="x", pady=4)
         self.e_pur_search = ttk.Entry(row, width=34)
         self.e_pur_search.pack(side="left")
-        self.e_pur_search.bind("<KeyRelease>", lambda e: self.pur_search_refresh())
+        self.e_pur_search.bind("<KeyRelease>", lambda e: self._debounce("pur_search", 120, self.pur_search_refresh))
+        self.e_pur_search.bind("<Return>", lambda e: self.pur_search_refresh())
         ttk.Button(row, text="بحث", command=self.pur_search_refresh).pack(side="left", padx=4)
         _pf, self.list_pur = self.make_drug_search_tree(mid, height=7)
         _pf.pack(fill="x")
@@ -2846,7 +2887,8 @@ class App:
         ttk.Label(top, text="بحث:").pack(side="left")
         self.e_cust_search = ttk.Entry(top, width=28)
         self.e_cust_search.pack(side="left", padx=4)
-        self.e_cust_search.bind("<KeyRelease>", lambda e: self.cust_refresh())
+        self.e_cust_search.bind("<KeyRelease>", lambda e: self._debounce("cust_search", 120, self.cust_refresh))
+        self.e_cust_search.bind("<Return>", lambda e: self.cust_refresh())
         ttk.Button(top, text="➕ عميل جديد", command=self.add_customer_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="💰 تسجيل دفعة على الحساب", command=self.customer_pay_dialog).pack(side="left", padx=4)
         ttk.Button(top, text="📜 سجل مشتريات العميل", command=self.customer_history_dialog).pack(side="left", padx=4)

@@ -53,6 +53,7 @@ cert files are missing, the server serves HTTP only and never
 crashes.
 """
 import collections
+import gzip
 import hashlib
 import hmac
 import json
@@ -892,22 +893,43 @@ def _make_handler(db_path, req_log=None):
             except Exception:
                 return False
 
-        def _send_json(self, status, obj):
-            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.wfile.write(body)
+        _STATIC_CACHE = {}
+        _STATIC_CACHE_LOCK = threading.Lock()
 
-        def _send_html(self, status, body_bytes):
+        def _accepts_gzip(self):
+            return "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+
+        def _send_body(self, status, content_type, body_bytes, extra_headers=None, cache_key=None):
+            use_gzip = len(body_bytes) >= 512 and self._accepts_gzip()
+            if use_gzip:
+                if cache_key is not None:
+                    with Handler._STATIC_CACHE_LOCK:
+                        cached = Handler._STATIC_CACHE.get(cache_key)
+                    if cached is None:
+                        cached = gzip.compress(body_bytes, compresslevel=6)
+                        with Handler._STATIC_CACHE_LOCK:
+                            Handler._STATIC_CACHE[cache_key] = cached
+                    body_bytes = cached
+                else:
+                    body_bytes = gzip.compress(body_bytes, compresslevel=5)
             self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", content_type)
+            for k, v in (extra_headers or ()):
+                self.send_header(k, v)
+            if use_gzip:
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Vary", "Accept-Encoding")
             self.send_header("Content-Length", str(len(body_bytes)))
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body_bytes)
+
+        def _send_json(self, status, obj):
+            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self._send_body(status, "application/json; charset=utf-8", body)
+
+        def _send_html(self, status, body_bytes):
+            self._send_body(status, "text/html; charset=utf-8", body_bytes)
 
         _SESSIONS = {}
         _SESSIONS_LOCK = threading.Lock()
@@ -1220,14 +1242,13 @@ def _make_handler(db_path, req_log=None):
                 self.send_header("Connection", "close")
                 self.end_headers()
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/javascript; charset=utf-8")
-            self.send_header("Cache-Control", "public, max-age=86400")
-            self.send_header("ETag", etag)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_body(
+                200,
+                "application/javascript; charset=utf-8",
+                body,
+                extra_headers=(("Cache-Control", "public, max-age=86400"), ("ETag", etag)),
+                cache_key=("zxing", etag),
+            )
 
         def _serve_static(self, filename, content_type, max_age=86400):
             """Serve one exact PWA shell file from the app root
@@ -1288,14 +1309,13 @@ def _make_handler(db_path, req_log=None):
                 self.send_header("Connection", "close")
                 self.end_headers()
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("ETag", etag)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_body(
+                200,
+                "text/html; charset=utf-8",
+                body,
+                extra_headers=(("Cache-Control", "no-cache"), ("ETag", etag)),
+                cache_key=("landing", etag),
+            )
 
         def _api_cloud_config(self):
             """v6.26: GET /api/cloud-config -> {"url":..., "key":...}.

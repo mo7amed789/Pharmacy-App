@@ -397,8 +397,8 @@ def apply_theme(root, style, theme_name="light", accent="teal", font_scale=0):
                     borderwidth=0)
     style.configure("TNotebook.Tab", padding=(18, 10), font=font(11, bold=True))
     style.map("TNotebook.Tab",
-              background=[("selected", p["card_bg"]), ("!selected", p["bg"])],
-              foreground=[("selected", p["accent"]), ("!selected", p["text"])],
+              background=[("selected", p["card_bg"]), ("active", p["row_alt"]), ("!selected", p["bg"])],
+              foreground=[("selected", p["accent"]), ("active", p["text"]), ("!selected", p["muted"])],
               expand=[("selected", (1, 1, 1, 0))])
     # v6.20: Fluent tables — a quiet header row (muted text on the
     # surface colour with a hairline border) instead of a heavy
@@ -499,11 +499,12 @@ def stripe_rows(tree, theme_name="light"):
     style_treeview(tree, theme_name)
     try:
         for idx, iid in enumerate(tree.get_children()):
-            tags = [t for t in tree.item(iid, "tags")
-                    if t in STATUS_TAGS]
+            cur_tags = tree.item(iid, "tags")
+            tags = tuple(t for t in cur_tags if t in STATUS_TAGS)
             if not tags:
-                tags = ["even" if idx % 2 == 0 else "odd"]
-            tree.item(iid, tags=tuple(tags))
+                tags = ("even" if idx % 2 == 0 else "odd",)
+            if tuple(cur_tags) != tags:
+                tree.item(iid, tags=tags)
     except Exception:
         pass
 
@@ -558,6 +559,7 @@ def _make_rounded_card(parent, title, value, subtitle, accent,
     """Fluent rounded card: rounded rect + accent pill on a canvas."""
     cv = tk.Canvas(parent, bg=p["bg"], highlightthickness=0, bd=0)
     cv._card_theme = theme_name
+    cv._card_hover = False
     inner = tk.Frame(cv, bg=p["card_bg"], padx=12, pady=10)
     win_id = cv.create_window(0, 0, window=inner, anchor="nw")
     val, sub = _card_labels(inner, title, value, subtitle)
@@ -567,9 +569,10 @@ def _make_rounded_card(parent, title, value, subtitle, accent,
             pal = palette(getattr(cv, "_card_theme", "light"))
             w = max(cv.winfo_width(), 40)
             h = max(cv.winfo_height(), 24)
+            outline_col = accent if getattr(cv, "_card_hover", False) else pal["border"]
             cv.delete("cardshape")
             _round_rect(cv, 1, 1, w - 2, h - 2, CARD_RADIUS,
-                        fill=pal["card_bg"], outline=pal["border"],
+                        fill=pal["card_bg"], outline=outline_col,
                         width=1, tags="cardshape")
             cy = h // 2
             _round_rect(cv, 7, cy - 9, 11, cy + 9, 2,
@@ -580,7 +583,16 @@ def _make_rounded_card(parent, title, value, subtitle, accent,
         except Exception:
             pass
 
+    def _set_hover(state):
+        if getattr(cv, "_card_hover", False) != state:
+            cv._card_hover = state
+            _redraw()
+
     cv.bind("<Configure>", _redraw)
+    cv.bind("<Enter>", lambda _e: _set_hover(True))
+    cv.bind("<Leave>", lambda _e: _set_hover(False))
+    inner.bind("<Enter>", lambda _e: _set_hover(True))
+    inner.bind("<Leave>", lambda _e: _set_hover(False))
     # A canvas does not count window items in its requested size, so
     # without this the card would collapse to a strip; ask for the
     # labels' natural size (the row still stretches it with expand).

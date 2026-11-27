@@ -443,6 +443,13 @@ class DB:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA busy_timeout = 15000")
         self.conn.execute("PRAGMA synchronous = NORMAL")
+        self.conn.execute("PRAGMA temp_store = MEMORY")
+        self.conn.execute("PRAGMA cache_size = -32000")
+        try:
+            self.conn.execute("PRAGMA mmap_size = 67108864")
+        except Exception:
+            pass
+        self._drugs_ver = 0
         if not init:
             return
         self.init_schema()
@@ -766,6 +773,12 @@ class DB:
             ("drugs", "idx_drugs_names",
              "CREATE INDEX IF NOT EXISTS idx_drugs_names "
              "ON drugs(trade_en, trade_ar, scientific)"),
+            ("drugs", "idx_drugs_active_trade",
+             "CREATE INDEX IF NOT EXISTS idx_drugs_active_trade "
+             "ON drugs(active, trade_en)"),
+            ("batches", "idx_batches_drug_qty",
+             "CREATE INDEX IF NOT EXISTS idx_batches_drug_qty "
+             "ON batches(drug_id, qty_units)"),
             ("barcodes", "idx_barcodes_drug",
              "CREATE INDEX IF NOT EXISTS idx_barcodes_drug "
              "ON barcodes(drug_id)"),
@@ -1156,6 +1169,7 @@ class DB:
                     (en, ar, sci, comp, form, strength, cat, strips, tabs,
                      buy, sell, mins, _now()))
                 drug_id = c.lastrowid
+                self._drugs_ver = getattr(self, "_drugs_ver", 0) + 1
                 c.execute("INSERT OR IGNORE INTO barcodes VALUES (?,?,?)",
                           (sample_barcode(i), drug_id, "box"))
                 # v5.7: opening stock sits ABOVE the alert threshold
@@ -1393,9 +1407,10 @@ class DB:
 
     # ---------- drugs / barcode ----------
     def _search_index(self):
-        """Normalized in-memory index of active drugs (see search_util). Rebuilt when the table changes."""
+        """Normalized in-memory index of active drugs (see search_util). Rebuilt when the drugs table changes."""
         import search_util
-        key = (self.conn.execute("PRAGMA data_version").fetchone()[0], self.conn.total_changes,
+        key = (self.conn.execute("PRAGMA data_version").fetchone()[0],
+               getattr(self, "_drugs_ver", 0),
                tuple(self.conn.execute("SELECT count(*), coalesce(max(id),0) FROM drugs WHERE active=1").fetchone()))
         cached = getattr(self, "_sidx", None)
         if cached is None or cached[0] != key:
@@ -1632,6 +1647,7 @@ class DB:
              (fields.get("discount_type") or "none"),
              float(fields.get("discount_value") or 0), _now()))
         drug_id = c.lastrowid
+        self._drugs_ver = getattr(self, "_drugs_ver", 0) + 1
         if fields.get("barcode"):
             self._link_barcode_checked(c, fields["barcode"], drug_id)
         if _commit and not getattr(self, "_cloud_mute", False):
@@ -1659,6 +1675,7 @@ class DB:
              float(fields.get("sell_price", 0)), int(fields.get("min_stock", 5)),
              (fields.get("discount_type") or "none"),
              float(fields.get("discount_value") or 0), drug_id))
+        self._drugs_ver = getattr(self, "_drugs_ver", 0) + 1
         if _commit and _old is not None and not getattr(self, "_cloud_mute", False):
             _watch = ("trade_en", "trade_ar", "scientific", "company", "form", "strength", "category",
                       "strips_per_box", "tablets_per_strip", "buy_price", "sell_price", "min_stock",
