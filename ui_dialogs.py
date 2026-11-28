@@ -119,7 +119,7 @@ def _run_fluent_message(title, message, kind, parent=None, yes_no=False):
     else:
         lbl_m = BodyLabel(msg)
         lbl_m.setWordWrap(True)
-        lbl_m.setMinimumWidth(360)
+        lbl_m.setMinimumWidth(220)
         lbl_m.setContentsMargins(18, 4, 18, 4)
         root.addWidget(lbl_m)
 

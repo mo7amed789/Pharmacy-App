@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -112,54 +114,53 @@ class CoreTabsMixin:
         self.lbl_dash_date = CaptionLabel("")
         tab.addWidget(self.lbl_dash_date)
 
-        # KPI Cards (2x4 grid, responsive with StatCard)
+        # KPI Cards — auto-fit grid: 4 per row on wide screens, fewer on narrow
         self.dash_cards = {}
-        grid = QGridLayout()
-        grid.setSpacing(10)
+        self._dash_cards_grid = ui_theme.ResponsiveGrid(min_item_width=250, spacing=10)
         defs = [
-            (0, 0, "sales", "مبيعات اليوم", self.pal["accent"], lambda: self.goto_tab(5) if self.is_admin else self.goto_pos()),
-            (0, 1, "profit", "صافي ربح اليوم", self.pal["success"], lambda: self.goto_tab(5)),
-            (0, 2, "cash", "نقدي اليوم", self.pal["info"], lambda: self.goto_tab(6)),
-            (0, 3, "invoices", "فواتير اليوم", self.pal["muted"], lambda: self.goto_tab(5) if self.is_admin else self.goto_pos()),
-            (1, 0, "low", "أصناف ناقصة", self.pal["warning"], lambda: self.goto_tab(2)),
-            (1, 1, "expiry", "تشغيلات قريبة الانتهاء (30 يوم)", self.pal["danger"], lambda: self.goto_tab(2)),
-            (1, 2, "critical", "طلبات حرجة (التنبؤ)", self.pal["danger"], lambda: self.goto_tab(8) if self.is_admin else self.goto_tab(2)),
-            (1, 3, "inv_value", "قيمة المخزون (سعر البيع)", self.pal["accent"], lambda: self.goto_tab(2)),
+            ("sales", "مبيعات اليوم", self.pal["accent"], lambda: self.goto_tab(5) if self.is_admin else self.goto_pos()),
+            ("profit", "صافي ربح اليوم", self.pal["success"], lambda: self.goto_tab(5)),
+            ("cash", "نقدي اليوم", self.pal["info"], lambda: self.goto_tab(6)),
+            ("invoices", "فواتير اليوم", self.pal["muted"], lambda: self.goto_tab(5) if self.is_admin else self.goto_pos()),
+            ("low", "أصناف ناقصة", self.pal["warning"], lambda: self.goto_tab(2)),
+            ("expiry", "تشغيلات قريبة الانتهاء (30 يوم)", self.pal["danger"], lambda: self.goto_tab(2)),
+            ("critical", "طلبات حرجة (التنبؤ)", self.pal["danger"], lambda: self.goto_tab(8) if self.is_admin else self.goto_tab(2)),
+            ("inv_value", "قيمة المخزون (سعر البيع)", self.pal["accent"], lambda: self.goto_tab(2)),
         ]
-        for r, c, key, title, acc, cb in defs:
+        for key, title, acc, cb in defs:
             card = ui_theme.StatCard(title, "—", "", acc, click_cb=cb)
-            grid.addWidget(card, r, c)
+            self._dash_cards_grid.addWidget(card)
             self.dash_cards[key] = card
-        tab.addLayout(grid)
+        tab.addWidget(self._dash_cards_grid)
         self._apply_dash_cards_visibility()
 
-        # Quick actions bar
+        # Quick actions bar — wraps onto extra lines instead of overflowing
         acts_card = CardWidget()
-        acts = QHBoxLayout(acts_card)
-        acts.setContentsMargins(14, 10, 14, 10)
-        acts.setSpacing(8)
-        acts.addWidget(StrongBodyLabel("إجراءات سريعة:"))
+        acts_outer = QVBoxLayout(acts_card)
+        acts_outer.setContentsMargins(14, 10, 14, 10)
+        acts = ui_theme.FlowRow(spacing=8)
+        acts.add(StrongBodyLabel("إجراءات سريعة:"))
         btn_pos = PrimaryPushButton("🛒 بيع جديد (F2)")
         btn_pos.clicked.connect(self.goto_pos)
-        acts.addWidget(btn_pos)
+        acts.add(btn_pos)
         if self.is_admin:
             btn_add = PushButton("➕ إضافة دواء")
             btn_add.clicked.connect(lambda: (self.goto_tab(2), self.drug_dialog()))
-            acts.addWidget(btn_add)
+            acts.add(btn_add)
         btn_inv = PushButton("📦 المخزون")
         btn_inv.clicked.connect(lambda: self.goto_tab(2))
-        acts.addWidget(btn_inv)
+        acts.add(btn_inv)
         if self.is_admin:
             btn_ai = PushButton("🤖 التنبؤ الذكي")
             btn_ai.clicked.connect(lambda: self.goto_tab(8))
-            acts.addWidget(btn_ai)
+            acts.add(btn_ai)
             btn_bk = PushButton("💾 نسخة احتياطية")
             btn_bk.clicked.connect(self.do_backup)
-            acts.addWidget(btn_bk)
+            acts.add(btn_bk)
         btn_ref = PushButton("🔄 تحديث اللوحة")
         btn_ref.clicked.connect(self.refresh_dashboard)
-        acts.addWidget(btn_ref)
-        acts.addStretch(1)
+        acts.add(btn_ref)
+        acts_outer.addWidget(acts)
         tab.addWidget(acts_card)
 
         # Bottom stacked tables: Alerts + Best Sellers
@@ -371,7 +372,7 @@ class CoreTabsMixin:
         top.addWidget(StrongBodyLabel("🔎 باركود:"))
         self.e_barcode = LineEdit()
         self.e_barcode.setPlaceholderText("امسح الباركود ثم Enter")
-        self.e_barcode.setMinimumWidth(240)
+        self.e_barcode.setMinimumWidth(150)
         self.e_barcode.setFont(ui_theme.qfont(13))
         self.e_barcode.returnPressed.connect(self.pos_scan)
         top.addWidget(self.e_barcode)
@@ -384,7 +385,7 @@ class CoreTabsMixin:
         top.addWidget(BodyLabel("بحث بالاسم / المادة الفعالة:"))
         self.e_search = SearchLineEdit()
         self.e_search.setPlaceholderText("اكتب اسم الدواء أو المادة الفعالة...")
-        self.e_search.setMinimumWidth(240)
+        self.e_search.setMinimumWidth(150)
         self.e_search.textChanged.connect(lambda _t: self._debounce("pos_search", 120, self.pos_search_refresh))
         self.e_search.returnPressed.connect(self.pos_search_refresh)
         top.addWidget(self.e_search, 1)
@@ -396,9 +397,12 @@ class CoreTabsMixin:
 
         tab.addWidget(CaptionLabel("F2 للانتقال للباركود  •  F9 لإتمام البيع  •  F1 للاختصارات  •  اضغط مرتين على الدواء لإضافته للفاتورة"))
 
-        # Split middle area: search results + cart
-        mid = QHBoxLayout()
-        mid.setSpacing(12)
+        # Split middle area: search results + cart. A splitter so it can flip
+        # to a stacked column on narrow windows (see _adapt_page_layout).
+        self._pos_split = QSplitter(Qt.Horizontal)
+        self._pos_split.setChildrenCollapsible(False)
+        self._pos_split.setHandleWidth(8)
+        mid = self._pos_split
 
         # Left side in code -> right in RTL (Search results + unit picker)
         left_card = CardWidget()
@@ -437,7 +441,7 @@ class CoreTabsMixin:
         self.lbl_alt = CaptionLabel("بدائل بنفس المادة الفعالة تظهر هنا عند اختيار دواء.")
         self.lbl_alt.setWordWrap(True)
         left.addWidget(self.lbl_alt)
-        mid.addWidget(left_card, 1)
+        mid.addWidget(left_card)
 
         # Cart card
         right_card = CardWidget()
@@ -472,8 +476,8 @@ class CoreTabsMixin:
             cbtns.addWidget(b)
         cbtns.addStretch(1)
         right.addLayout(cbtns)
-        mid.addWidget(right_card, 1)
-        tab.addLayout(mid, 1)
+        mid.addWidget(right_card)
+        tab.addWidget(self._pos_split, 1)
 
         # Bottom Totals & Checkout Card
         self.pos_panel = CardWidget()
@@ -485,7 +489,7 @@ class CoreTabsMixin:
         row1.setSpacing(10)
         row1.addWidget(StrongBodyLabel("العميل:"))
         self.cb_customer = ComboBox()
-        self.cb_customer.setMinimumWidth(180)
+        self.cb_customer.setMinimumWidth(140)
         self._refresh_customer_combo()
         row1.addWidget(self.cb_customer)
 
@@ -533,7 +537,7 @@ class CoreTabsMixin:
 
         btn_complete = PrimaryPushButton("✅ إتمام البيع (F9)")
         btn_complete.setMinimumHeight(40)
-        btn_complete.setMinimumWidth(180)
+        btn_complete.setMinimumWidth(150)
         btn_complete.clicked.connect(self.pos_complete_sale)
         row2.addWidget(btn_complete)
 
@@ -942,7 +946,7 @@ class CoreTabsMixin:
         top.addWidget(StrongBodyLabel("بحث:"))
         self.e_inv_search = SearchLineEdit()
         self.e_inv_search.setPlaceholderText("ابحث بالاسم أو المادة الفعالة أو الباركود...")
-        self.e_inv_search.setMinimumWidth(240)
+        self.e_inv_search.setMinimumWidth(150)
         self.e_inv_search.textChanged.connect(lambda _t: self._debounce("inv_search", 130, self.inv_refresh))
         self.e_inv_search.returnPressed.connect(self.inv_refresh)
         top.addWidget(self.e_inv_search, 1)
@@ -1512,7 +1516,7 @@ class CoreTabsMixin:
         r1.setSpacing(6)
         r1.addWidget(StrongBodyLabel("المورد:"))
         self.cb_supplier = ComboBox()
-        self.cb_supplier.setMinimumWidth(180)
+        self.cb_supplier.setMinimumWidth(140)
         sups = [s["name"] for s in self.db.suppliers()]
         self.cb_supplier.addItems(sups)
         r1.addWidget(self.cb_supplier)
@@ -2013,7 +2017,7 @@ class CoreTabsMixin:
         top.addWidget(StrongBodyLabel("بحث:"))
         self.e_cust_search = SearchLineEdit()
         self.e_cust_search.setPlaceholderText("ابحث باسم العميل أو الهاتف...")
-        self.e_cust_search.setMinimumWidth(240)
+        self.e_cust_search.setMinimumWidth(150)
         self.e_cust_search.textChanged.connect(lambda _t: self._debounce("cust_search", 120, self.cust_refresh))
         self.e_cust_search.returnPressed.connect(self.cust_refresh)
         top.addWidget(self.e_cust_search, 1)

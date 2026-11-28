@@ -200,7 +200,7 @@ class SystemTabsMixin:
         qctl = QVBoxLayout()
         qctl.addWidget(CaptionLabel("اختر رابط شبكة هاتفك:"))
         self.cmb_qr_url = ComboBox()
-        self.cmb_qr_url.setMinimumWidth(340)
+        self.cmb_qr_url.setMinimumWidth(200)
         self.cmb_qr_url.currentIndexChanged.connect(lambda _i: self._qr_refresh())
         qctl.addWidget(self.cmb_qr_url)
 

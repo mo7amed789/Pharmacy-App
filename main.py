@@ -115,9 +115,12 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         ui_theme.apply_win11_window_style(self, self.theme_name, self.ui_accent)
 
         # NavigationView appearance — scale with the screen so the panel never
-        # eats the content area on small panels.
+        # eats the content area on small panels, and collapse to the icon rail
+        # automatically when the window gets narrow.
         try:
             self.navigationInterface.setExpandWidth(ui_theme.nav_expand_width(self))
+            self.navigationInterface.setCollapsible(True)
+            self.navigationInterface.setMinimumExpandWidth(1100)
         except Exception:
             pass
 
@@ -468,7 +471,16 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         if builder is None:
             return
         self._tab_built[idx] = True
-        builder(self._tab_widgets[idx])
+        page = self._tab_widgets[idx]
+        builder(page)
+        # Responsive + direction pass over everything the builder created.
+        ui_theme.responsive_pass(page)
+        adapt = getattr(self, "_adapt_page_layout", None)
+        if callable(adapt):
+            try:
+                adapt(idx)
+            except Exception:
+                pass
 
     def goto_tab(self, index):
         if index in self.hidden_tabs():
@@ -638,12 +650,27 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         threading.excepthook = lambda args: handle_exception(args.exc_type, args.exc_value, args.exc_traceback)
 
     # ---------- Window Lifecycle ----------
+    def _adapt_page_layout(self, idx=None):
+        """Flip wide/tall layouts to match the current window width."""
+        width = self.width()
+        # POS: search results beside the cart when wide, stacked when narrow.
+        split = getattr(self, "_pos_split", None)
+        if split is not None:
+            want = Qt.Horizontal if width >= 1180 else Qt.Vertical
+            if split.orientation() != want:
+                split.setOrientation(want)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         try:
             self._topbar_compact(self.width())
         except Exception:
             pass
+        for idx in list(getattr(self, "_tab_built", {}).keys()):
+            try:
+                self._adapt_page_layout(idx)
+            except Exception:
+                pass
 
     def closeEvent(self, event):
         ui_theme.save_main_window_geometry(self, self.db)

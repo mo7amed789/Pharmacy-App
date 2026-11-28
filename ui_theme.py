@@ -9,7 +9,8 @@ CardWidget, TableWidget, InfoBar, crisp RTL typography).
 import os
 import re
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtWidgets import QGridLayout, QLayout, QSizePolicy
 from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QBrush
 from PySide6.QtWidgets import (
     QApplication,
@@ -39,7 +40,14 @@ from qfluentwidgets import (
 )
 
 FONT_FAMILY = "Segoe UI"
+# Arabic-first stack: purpose-built Arabic UI faces when installed, then the
+# Windows Arabic-capable system UI fonts.
 FONT_FAMILIES_PREFERRED = (
+    "Cairo",
+    "Tajawal",
+    "Noto Sans Arabic",
+    "Noto Kufi Arabic",
+    "Dubai",
     "Segoe UI Variable Text",
     "Segoe UI Variable",
     "Segoe UI",
@@ -350,19 +358,13 @@ def window_qss(theme_name=None, accent=None):
         max-height: 1px;
         min-height: 1px;
     }}
-    /* RTL: right-align all input fields */
+    /* RTL: input fields follow the text language (line edits switch direction
+       per content via ui_theme's bidi filter). */
     QLineEdit, LineEdit, SearchLineEdit, PasswordLineEdit {{
-        text-align: right;
+        padding-right: 4px;
     }}
     QTextEdit, TextEdit {{
-        text-align: right;
-    }}
-    QComboBox, ComboBox, EditableComboBox {{
-        text-align: right;
-    }}
-    /* RTL: right-align all labels by default */
-    QLabel {{
-        qproperty-alignment: 'AlignRight|AlignVCenter';
+        padding-right: 4px;
     }}
     /* Fluent-specific RTL button layout */
     QPushButton, PushButton, PrimaryPushButton {{
@@ -380,22 +382,310 @@ def make_separator():
 
 
 def make_scroll_page(object_name="page"):
-    """Return (scroll_area, container_widget, container_layout) for scrollable tabs."""
+    """Return (scroll_area, container_widget, container_layout) for scrollable tabs.
+
+    Pages scroll vertically only: horizontal scrolling is never needed because
+    every row reflows inside the viewport width.
+    """
     scroll = SmoothScrollArea()
     scroll.setObjectName(object_name)
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     scroll.setStyleSheet("background-color: transparent; border: none;")
     scroll.setLayoutDirection(Qt.RightToLeft)
 
     inner = QWidget()
     inner.setStyleSheet("background-color: transparent;")
     inner.setLayoutDirection(Qt.RightToLeft)
+    inner.setMinimumWidth(0)
+    inner.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
     layout = QVBoxLayout(inner)
-    layout.setContentsMargins(20, 14, 20, 20)
+    layout.setContentsMargins(16, 14, 16, 18)
     layout.setSpacing(12)
     scroll.setWidget(inner)
     return scroll, inner, layout
+
+
+# ---------------------------------------------------------------------------
+# Responsive containers (Qt equivalents of flex-wrap + CSS grid auto-fit)
+# ---------------------------------------------------------------------------
+class FlowRow(QWidget):
+    """A wrapping row: widgets flow onto new lines instead of overflowing.
+
+    Implemented on QGridLayout (no custom C++ layout callbacks) so Qt stays in
+    control of geometry; children keep their natural size and the row reports
+    the height it actually needs.
+    """
+
+    def __init__(self, spacing=8, margins=(0, 0, 0, 0), parent=None):
+        super().__init__(parent)
+        self._spacing = max(2, int(spacing))
+        self._grid = QGridLayout(self)
+        if isinstance(margins, (tuple, list)):
+            self._grid.setContentsMargins(*margins)
+        self._grid.setSpacing(self._spacing)
+        self._items = []
+        self._signature = None
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.setMinimumWidth(0)
+
+    # -- API ---------------------------------------------------------------
+    def add(self, widget):
+        self._items.append(widget)
+        widget.setParent(self)
+        widget.setMinimumWidth(0)
+        self._reflow(force=True)
+        return widget
+
+    def addWidget(self, widget, *args, **kwargs):
+        return self.add(widget)
+
+    def count(self):
+        return len(self._items)
+
+    def minimumSizeHint(self):
+        """A wrapping row must not claim the width of all its items at once."""
+        widest = 0
+        for w in self._items:
+            if not w.isHidden():
+                widest = max(widest, w.minimumSizeHint().width(), w.sizeHint().width())
+        if not widest:
+            return super().minimumSizeHint()
+        try:
+            height = self._grid.minimumSize().height()
+        except Exception:
+            height = super().minimumSizeHint().height()
+        return QSize(min(widest, 300), max(24, height))
+
+    # -- reflow ------------------------------------------------------------
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _rows_for_width(self, width):
+        rows = []
+        row = []
+        used = 0
+        for w in self._items:
+            if w.isHidden():
+                continue
+            need = max(w.sizeHint().width(), w.minimumWidth())
+            cost = need + (self._spacing if row else 0)
+            if row and used + cost > width:
+                rows.append(row)
+                row = []
+                used = 0
+                cost = need
+            row.append(w)
+            used += cost
+        if row:
+            rows.append(row)
+        return rows
+
+    def _reflow(self, force=False):
+        width = self.width()
+        if width <= 0 or not self._items:
+            return
+        rows = self._rows_for_width(width)
+        signature = tuple(tuple(id(w) for w in r) for r in rows)
+        if signature == self._signature and not force:
+            return
+        self._signature = signature
+        for w in self._items:
+            self._grid.removeWidget(w)
+        cols = max((len(r) for r in rows), default=1)
+        for r, row_widgets in enumerate(rows):
+            for c, w in enumerate(row_widgets):
+                self._grid.addWidget(w, r, c)
+        for c in range(cols):
+            self._grid.setColumnStretch(c, 0)
+        self.updateGeometry()
+
+
+class ResponsiveGrid(QWidget):
+    """Auto-fit grid: reflows children and stretches them to fill each row."""
+
+    def __init__(self, min_item_width=200, spacing=10, parent=None):
+        super().__init__(parent)
+        self._min_w = int(min_item_width)
+        self._spacing = int(spacing)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(spacing)
+        self._widgets = []
+        self._cols = 0
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.setMinimumWidth(0)
+
+    def addWidget(self, widget, *args, **kwargs):
+        self._widgets.append(widget)
+        widget.setParent(self)
+        widget.setMinimumWidth(0)
+        self._relayout(force=True)
+        return widget
+
+    def widgets(self):
+        return list(self._widgets)
+
+    def minimumSizeHint(self):
+        """Never demand the full multi-column width from the page."""
+        widest = 0
+        for w in self._widgets:
+            if not w.isHidden():
+                widest = max(widest, w.minimumSizeHint().width())
+        if not widest:
+            return super().minimumSizeHint()
+        try:
+            height = self._grid.minimumSize().height()
+        except Exception:
+            height = super().minimumSizeHint().height()
+        return QSize(min(widest, 300), max(60, height))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _columns_for_width(self, width):
+        if width <= 0:
+            return 1
+        return max(1, min(4, (width + self._spacing) // (self._min_w + self._spacing)))
+
+    def _relayout(self, force=False):
+        cols = self._columns_for_width(self.width())
+        if cols == self._cols and not force:
+            return
+        self._cols = cols
+        for w in self._widgets:
+            self._grid.removeWidget(w)
+        for i, w in enumerate(self._widgets):
+            self._grid.addWidget(w, i // cols, i % cols)
+        for c in range(max(cols, self._grid.columnCount())):
+            self._grid.setColumnStretch(c, 1 if c < cols else 0)
+        self.updateGeometry()
+
+
+def _collect_row_widgets(layout):
+    """Return (widgets, convertible). Nested layouts make a row unsafe to convert."""
+    out = []
+    for j in range(layout.count()):
+        item = layout.itemAt(j)
+        if item is None:
+            continue
+        w = item.widget()
+        if w is not None:
+            out.append(w)
+        elif item.layout() is not None:
+            return [], False
+    return out, True
+
+
+def _orphan_layout(layout):
+    """Not used any more: destroying a layout that still owns items can delete
+    the widgets in PySide. Rows are converted by reparenting widgets first."""
+    return None
+
+
+def _flow_row_from_layout(parent_widget, layout, widgets, spacing, margins):
+    """Move a row's widgets into a wrapping FlowRow, then empty the old layout."""
+    row = FlowRow(
+        spacing=spacing,
+        margins=(margins.left(), margins.top(), margins.right(), margins.bottom()),
+        parent=parent_widget,
+    )
+    for w in widgets:
+        row.add(w)          # Qt detaches the widget from its previous layout
+    while layout.count():   # drop leftover stretches/spacers
+        layout.takeAt(0)
+    return row
+
+
+def flowify_rows(root, min_items=4):
+    """Turn wide horizontal rows anywhere in a page into wrapping rows.
+
+    Rows of label+field (2-3 items) are left untouched, so forms keep their
+    compact look; toolbars and action bars wrap instead of overflowing.
+    """
+    if root is None:
+        return 0
+    converted = 0
+    targets = [root] + list(root.findChildren(QWidget))
+    for widget in targets:
+        try:
+            layout = widget.layout()
+        except Exception:
+            continue
+        if isinstance(layout, QHBoxLayout):
+            widgets, ok = _collect_row_widgets(layout)
+            if ok and len(widgets) >= min_items:
+                margins = layout.contentsMargins()
+                spacing = layout.spacing()
+                spacing = spacing if spacing and spacing > 0 else 8
+                try:
+                    row = _flow_row_from_layout(widget, layout, widgets, spacing, margins)
+                    layout.setContentsMargins(0, 0, 0, 0)
+                    layout.setSpacing(0)
+                    layout.addWidget(row)
+                    converted += 1
+                except Exception:
+                    continue
+        elif isinstance(layout, QVBoxLayout):
+            converted += _convert_child_rows(widget, layout, min_items)
+    return converted
+
+
+def _convert_child_rows(parent_widget, vbox, min_items):
+    converted = 0
+    i = 0
+    while i < vbox.count():
+        item = vbox.itemAt(i)
+        sub = item.layout() if item is not None else None
+        if isinstance(sub, QHBoxLayout):
+            widgets, ok = _collect_row_widgets(sub)
+            if ok and len(widgets) >= min_items:
+                margins = sub.contentsMargins()
+                spacing = sub.spacing()
+                spacing = spacing if spacing and spacing > 0 else 8
+                try:
+                    row = _flow_row_from_layout(parent_widget, sub, widgets, spacing, margins)
+                    vbox.takeAt(i)
+                    vbox.insertWidget(i, row)
+                    converted += 1
+                except Exception:
+                    i += 1
+                    continue
+        i += 1
+    return converted
+
+
+def flowify_page_rows(inner, min_items=3):
+    """Turn page-level horizontal rows (toolbars, filter bars) into wrapping rows.
+
+    Only rows that are direct children of the page column are converted, so
+    compact rows inside cards keep their exact design.
+    """
+    if inner is None:
+        return 0
+    layout = inner.layout()
+    if not isinstance(layout, QVBoxLayout):
+        return 0
+    return _convert_child_rows(inner, layout, min_items)
+
+
+def responsive_pass(page):
+    """Apply wrapping rows + Arabic/Latin direction to a freshly built page."""
+    if page is None:
+        return
+    try:
+        scroll = page.findChild(SmoothScrollArea)
+        inner = scroll.widget() if scroll is not None else page
+        flowify_page_rows(inner)
+        flowify_rows(inner, min_items=4)
+        apply_auto_direction(page)
+    except Exception:
+        pass
+
 
 
 class StatCard(CardWidget):
@@ -409,6 +699,10 @@ class StatCard(CardWidget):
         if click_cb is not None:
             self.setCursor(Qt.PointingHandCursor)
             self.clicked.connect(click_cb)
+
+        # Cards shrink with the window instead of forcing a wide page.
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -428,6 +722,7 @@ class StatCard(CardWidget):
 
         self.lbl_title = CaptionLabel(title, self)
         self.lbl_title.setFont(qfont(10, bold=True))
+        self.lbl_title.setWordWrap(True)
         self.lbl_value = QLabel(str(value), self)
         self.lbl_value.setFont(qfont(20, bold=True))
         self.lbl_sub = CaptionLabel(str(sub), self)
@@ -444,12 +739,26 @@ class StatCard(CardWidget):
             self.lbl_value.setText(str(value))
         if sub is not None:
             self.lbl_sub.setText(str(sub))
+        self._align_text()
+
+    def _align_text(self):
+        """Arabic values (and currency/numbers) sit on the right, Latin on the left."""
+        for lbl in (self.lbl_title, self.lbl_value, self.lbl_sub):
+            try:
+                if direction_for_text(lbl.text()) is None:
+                    lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    lbl.setLayoutDirection(Qt.RightToLeft)
+                else:
+                    apply_text_direction(lbl)
+            except Exception:
+                pass
 
     def recolor(self, theme_name=None, accent=None):
         p = palette(theme_name, accent)
         self.lbl_title.setStyleSheet(f"color: {p['muted']}; background: transparent;")
         self.lbl_value.setStyleSheet(f"color: {p['text']}; background: transparent;")
         self.lbl_sub.setStyleSheet(f"color: {p['muted']}; background: transparent;")
+        self._align_text()
 
     def mousePressEvent(self, event):
         if self._click_cb is not None and event.button() == Qt.LeftButton:
@@ -458,15 +767,23 @@ class StatCard(CardWidget):
 
 
 def configure_table(table: TableWidget, headers, widths=None, stretch_cols=None, min_height=220):
-    """Configure a Fluent TableWidget consistently across the app."""
+    """Configure a Fluent TableWidget consistently across the app.
+
+    Column widths are treated as *preferred* widths: they shrink
+    proportionally when the table is narrower than their sum, so a table never
+    forces horizontal scrolling on the page. Long text is elided instead.
+    """
     table.setColumnCount(len(headers))
     table.setHorizontalHeaderLabels(list(headers))
     table.setBorderVisible(True)
     table.setBorderRadius(8)
     table.setWordWrap(False)
+    table.setTextElideMode(Qt.ElideRight)
     table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     table.setSelectionBehavior(QAbstractItemView.SelectRows)
     table.setSelectionMode(QAbstractItemView.SingleSelection)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     table.verticalHeader().hide()
     table.verticalHeader().setDefaultSectionSize(34)
     table.setMinimumHeight(min_height)
@@ -476,16 +793,88 @@ def configure_table(table: TableWidget, headers, widths=None, stretch_cols=None,
     # AlignAbsolute keeps Arabic headers on the right even inside RTL layouts
     # (Qt mirrors relative AlignLeft/AlignRight otherwise).
     hh.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter | Qt.AlignAbsolute)
+    hh.setStretchLastSection(False)
+    hh.setSectionResizeMode(QHeaderView.Interactive)
+
     if widths:
+        table._fit_widths = tuple(int(w or 0) for w in widths)
+        table._fit_stretch = tuple(stretch_cols or ())
         for idx, w in enumerate(widths):
             if w is not None and idx < len(headers):
-                table.setColumnWidth(idx, w)
-    if stretch_cols:
-        for idx in stretch_cols:
-            if 0 <= idx < len(headers):
-                hh.setSectionResizeMode(idx, QHeaderView.Stretch)
+                table.setColumnWidth(idx, int(w))
+        if not getattr(table, "_fit_filter", None):
+            flt = _TableColumnFit(table)
+            table._fit_filter = flt
+            table.installEventFilter(flt)
+            try:
+                table.viewport().installEventFilter(flt)
+            except Exception:
+                pass
+        QTimer.singleShot(0, lambda t=table: _fit_table_columns(t))
+
+
+def _fit_table_columns(table):
+    """Scale preferred column widths to the space the table actually has."""
+    if getattr(table, "_fit_busy", False):
+        return
+    widths = getattr(table, "_fit_widths", None)
+    if not widths or table.columnCount() < 1:
+        return
+    try:
+        avail = table.viewport().width()
+    except Exception:
+        avail = table.width()
+    if avail <= 40:
+        return
+
+    n = table.columnCount()
+    ws = [int(widths[i]) if i < len(widths) and widths[i] else 0 for i in range(n)]
+    if not any(ws):
+        return
+    total = sum(w for w in ws if w > 0)
+    target = avail - 2
+    stretch = tuple(c for c in getattr(table, "_fit_stretch", ()) if 0 <= c < n)
+
+    if total <= target:
+        extra = target - total
+        if stretch:
+            share = extra // len(stretch)
+            for c in stretch:
+                ws[c] += share
+        else:
+            ws[-1] += extra
     else:
-        hh.setStretchLastSection(True)
+        factor = float(target) / float(total)
+        for i, w in enumerate(ws):
+            if w > 0:
+                ws[i] = max(52, int(w * factor))
+        guard = 0
+        while sum(ws) > target and guard < 200:
+            guard += 1
+            widest = ws.index(max(ws))
+            if ws[widest] <= 52:
+                break
+            ws[widest] -= 4
+
+    table._fit_busy = True
+    try:
+        for c, w in enumerate(ws):
+            if w > 0 and table.columnWidth(c) != w:
+                table.setColumnWidth(c, w)
+    finally:
+        table._fit_busy = False
+
+
+class _TableColumnFit(QObject):
+    """Re-fit table columns whenever the table (or its viewport) resizes."""
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Resize, QEvent.Show, QEvent.LayoutRequest):
+            try:
+                _fit_table_columns(obj if hasattr(obj, "columnCount") else obj.parent())
+            except Exception:
+                pass
+        return False
 
 
 def set_table_rows(table: TableWidget, rows_values, row_styles=None):
