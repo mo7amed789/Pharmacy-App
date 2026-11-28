@@ -56,3 +56,7 @@ catalog/*.jsonl.gz
 # remote monitoring credentials (device login)
 remote_monitor.json
 *.rmstate.json
+
+# --- PyInstaller build output (the .spec file IS tracked) ---
+build/
+dist/
