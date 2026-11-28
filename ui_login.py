@@ -120,7 +120,7 @@ class LoginWindow(QDialog):
         self._pal = ui_theme.apply_qt_theme(None, self._theme, self._accent, 0)
         ui_dialogs_set(self._theme, self._accent)
 
-        self.setWindowTitle("تسجيل الدخول — Pharmacy Enterprise")
+        self.setWindowTitle("تسجيل الدخول — صيدلية المؤسسة")
         self.setLayoutDirection(Qt.RightToLeft)
         self.setStyleSheet(ui_theme.window_qss(self._theme, self._accent))
         self.setMinimumSize(440, 490)
@@ -140,7 +140,7 @@ class LoginWindow(QDialog):
         body.setSpacing(8)
         root.addLayout(body, 1)
 
-        brand = TitleLabel("💊 Pharmacy Enterprise")
+        brand = TitleLabel("💊 صيدلية المؤسسة")
         brand.setAlignment(Qt.AlignCenter)
         body.addWidget(brand)
 

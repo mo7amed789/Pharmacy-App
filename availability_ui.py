@@ -43,17 +43,17 @@ def open_settings(app):
     lay.addWidget(warn)
 
     config = store.config()
-    lay.addWidget(CaptionLabel("HTTPS receiver URL"))
+    lay.addWidget(CaptionLabel("رابط الاستقبال (HTTPS):"))
     e_endpoint = LineEdit()
     e_endpoint.setText(config["endpoint"])
     lay.addWidget(e_endpoint)
 
-    lay.addWidget(CaptionLabel("Branch ID (UUID)"))
+    lay.addWidget(CaptionLabel("معرّف الفرع (UUID):"))
     e_branch = LineEdit()
     e_branch.setText(config["branch"])
     lay.addWidget(e_branch)
 
-    lay.addWidget(CaptionLabel("Installation ID: " + config["installation"]))
+    lay.addWidget(CaptionLabel("معرّف التثبيت: " + config["installation"]))
     lbl_status = BodyLabel("")
     lbl_status.setWordWrap(True)
     lay.addWidget(lbl_status)
@@ -61,7 +61,13 @@ def open_settings(app):
     rows = TableWidget()
     ui_theme.configure_table(
         rows,
-        ("Local ID", "Local product / strength", "Units/box", "Platform medicine", "Review state"),
+        (
+            "المعرّف المحلي",
+            "الصنف المحلي / التركيز",
+            "عدد الوحدات بالعلبة",
+            "دواء المنصة",
+            "حالة المراجعة",
+        ),
         (75, 250, 90, 290, 140),
         stretch_cols=(3,),
         min_height=240,
@@ -75,13 +81,13 @@ def open_settings(app):
         c = store.config()
         p = store.pending()
         lbl_status.setText(
-            ("ENABLED" if c["enabled"] else "DISABLED")
+            ("مُفعّلة" if c["enabled"] else "موقوفة")
             + " | "
             + c["status"]
-            + " | Reviewed: "
+            + " | تمت مراجعته: "
             + str(len(store.bindings()))
-            + " | Queued: "
-            + str(bool(p))
+            + " | في قائمة الانتظار: "
+            + ("نعم" if p else "لا")
         )
 
     def guard(fn):
@@ -111,16 +117,16 @@ def open_settings(app):
         if not source:
             return
         if os.path.getsize(source) > 20 * 1024 * 1024:
-            raise ValueError("Catalog too large")
+            raise ValueError("ملف الكتالوج كبير جداً — الحد 20 ميجابايت")
         with open(source, encoding="utf-8") as f:
             catalog = json.load(f)
         if not isinstance(catalog, list):
-            raise ValueError("Use an exported array of platform medicine DTOs")
+            raise ValueError("استخدم ملف JSON مصدّراً من المنصة كمصفوفة أدوية")
         candidates = mapping_candidates(app.db, catalog)
         render_candidates()
 
     def ui_dialogs_get_open(parent):
-        return messagebox.get_open_filename(parent=parent, filetypes=[("Platform catalog JSON", "*.json")])
+        return messagebox.get_open_filename(parent=parent, filetypes=[("كتالوج المنصة JSON", "*.json")])
 
     def review():
         idx = ui_theme.selected_row_index(rows)
@@ -128,16 +134,16 @@ def open_settings(app):
             return
         candidate = candidates[idx]
         if len(candidate["candidateMedicineIds"]) != 1:
-            raise ValueError("Exact unique box GTIN required; do not guess")
+            raise ValueError("مطلوب باركود علبة (GTIN) واحد مطابق تماماً — لا تخمّن")
         mid = candidate["candidateMedicineIds"][0]
         remote = next(m for m in catalog if m["id"] == mid)
         d = dict(app.db.conn.execute("SELECT * FROM drugs WHERE id=?", (candidate["externalProductId"],)).fetchone())
         from database import units_per_box
         text = (
-            "Local: %s / %s / %s\nLocal units per box: %s\n"
-            "Platform: %s / %s / %s\nGTIN: %s\n\n"
+            "المحلي: %s / %s / %s\nوحدات العلبة المحلية: %s\n"
+            "المنصة: %s / %s / %s\nالباركود (GTIN): %s\n\n"
             "راجع الاسم والتركيز والشكل والعبوة بالضبط على الجانبين. هل التطابق مؤكد؟\n"
-            "Server binding must also be provisioned by the operator."
+            "(يجب تجهيز الربط على السيرفر أيضاً بواسطة المشغل.)"
             % (
                 candidate["name"], candidate["strength"], candidate["dosageForm"], units_per_box(d),
                 remote.get("brandName", ""), remote.get("strength", ""), remote.get("dosageForm", ""),
@@ -147,13 +153,13 @@ def open_settings(app):
         if not messagebox.askyesno("مراجعة عبوة واحدة", text, parent=win):
             return
         store.review(app.db, catalog, candidate["externalProductId"], mid)
-        candidate["status"] = "reviewed locally"
+        candidate["status"] = "تمت المراجعة محلياً"
         render_candidates()
 
     def export():
         store.configure(e_endpoint.text().strip(), e_branch.text().strip(), False)
         target = messagebox.get_save_filename(
-            parent=win, initialfile="binding_manifest.json", filetypes=[("Reviewed binding manifest", "*.json")]
+            parent=win, initialfile="binding_manifest.json", filetypes=[("بيان الربط المُراجع", "*.json")]
         )
         if target:
             with open(target, "w", encoding="utf-8") as f:
@@ -162,10 +168,10 @@ def open_settings(app):
     def preview():
         p = inventory_preview(app.db, store.bindings())
         if p["held"]:
-            raise ValueError("Held mappings: " + str(len(p["held"])) + ". Review changed identity or prices before enabling.")
+            raise ValueError("ربط معلّق للمراجعة: " + str(len(p["held"])) + " — راجع تغيّر الهوية أو الأسعار قبل التفعيل.")
         messagebox.showinfo(
             "معاينة محلية فقط",
-            "Reviewed items: %s\nExplicit zero: %s\nNo stock transmitted."
+            "أصناف مُراجعة: %s\nصفر صريح: %s\nلا يتم إرسال أي مخزون غير مُراجع."
             % (len(p["items"]), sum(i["availableQuantity"] == 0 for i in p["items"])),
             parent=win,
         )
@@ -178,7 +184,7 @@ def open_settings(app):
 
     def enable():
         if not store.bindings():
-            raise ValueError("Review mappings and provision them on the server first")
+            raise ValueError("راجع الربط وجهّزه على السيرفر أولاً قبل التفعيل")
         if not messagebox.askyesno(
             "تشغيل لاحق فقط",
             "هل جهزت الفرع والمكان والمصادقة والربط المراجع على السيرفر؟\n"

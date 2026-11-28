@@ -32,7 +32,7 @@ from qfluentwidgets import (
     TextEdit,
 )
 
-from app_helpers import money, safe_float, safe_int, strict_float
+from app_helpers import ar_date, money, safe_float, safe_int, strict_float
 from database import allowed_units, unit_price
 import ui_dialogs as messagebox
 import ui_theme
@@ -60,7 +60,7 @@ class OpsTabsMixin:
         top = QHBoxLayout(top_card)
         top.setContentsMargins(12, 10, 12, 10)
         top.setSpacing(8)
-        top.addWidget(StrongBodyLabel("التاريخ (YYYY-MM-DD):"))
+        top.addWidget(StrongBodyLabel("التاريخ (سنة-شهر-يوم):"))
         self.e_rep_date = LineEdit()
         self.e_rep_date.setText(date.today().isoformat())
         self.e_rep_date.setFixedWidth(130)
@@ -754,7 +754,7 @@ class OpsTabsMixin:
         lay.setSpacing(8)
 
         old_total = float(sale["total"])
-        lay.addWidget(StrongBodyLabel("فاتورة: %s — التاريخ: %s — الإجمالي القديم: %s" % (sale["invoice_no"], sale["date"], money(old_total))))
+        lay.addWidget(StrongBodyLabel("فاتورة: %s — التاريخ: %s — الإجمالي القديم: %s" % (sale["invoice_no"], ar_date(sale["date"]), money(old_total))))
         if sale.get("printed_at"):
             lw = CaptionLabel("⚠️ هذه الفاتورة مطبوعة — بعد التعديل ستُطبع من جديد بالمحتوى الجديد.")
             lw.setStyleSheet(f"color: {self.pal['warning']};")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Shared pure-Python formatting, validation, path, and URL helpers."""
-from datetime import datetime
+from datetime import date, datetime
 import os
 import sys
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -11,6 +11,27 @@ BASE = (
     else os.path.dirname(os.path.abspath(__file__))
 )
 EGP = "ج.م"
+
+
+def ar_date(value):
+    """User-facing date as يوم/شهر/سنة (dd/mm/yyyy).
+
+    Data storage, CSV exports and IDs keep ISO (YYYY-MM-DD); only what a human
+    reads on screen or paper is localized.
+    """
+    try:
+        if isinstance(value, datetime):
+            d = value.date()
+        elif isinstance(value, date):
+            d = value
+        else:
+            s = str(value or "").strip()
+            if not s:
+                return ""
+            d = datetime.strptime(s[:10], "%Y-%m-%d").date()
+        return "%02d/%02d/%04d" % (d.day, d.month, d.year)
+    except Exception:
+        return str(value or "")
 
 
 def _startup_log(msg):

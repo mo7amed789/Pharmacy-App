@@ -540,7 +540,7 @@ def _send_raw_winspool(printer_name, data):
         if not winspool.OpenPrinterW(printer_name, ctypes.byref(handle), None):
             return False, "تعذّر فتح الطابعة «%s» — تأكد من الاسم" % printer_name
         try:
-            doc = DOC_INFO_1W("Pharmacy Receipt", None, "RAW")
+            doc = DOC_INFO_1W("فاتورة صيدلية", None, "RAW")
             if not winspool.StartDocPrinterW(handle, 1, ctypes.byref(doc)):
                 return False, "تعذّر بدء مهمة الطباعة على «%s»" % printer_name
             try:

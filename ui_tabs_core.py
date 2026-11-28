@@ -42,7 +42,7 @@ from qfluentwidgets import (
     TitleLabel,
 )
 
-from app_helpers import BASE, money, safe_float, safe_int, strict_float, strict_int
+from app_helpers import BASE, ar_date, money, safe_float, safe_int, strict_float, strict_int
 from database import (
     DB,
     allowed_units,
@@ -71,6 +71,23 @@ except Exception:
 
 class CoreTabsMixin:
     """Dashboard, POS, Inventory, Purchases, Customers tabs & dialogs."""
+
+    # Arabic-native dosage-form picker. Stored values may be Arabic or the
+    # legacy English names; both are understood by database.allowed_units().
+    FORM_AR = {
+        "Tablets": "أقراص",
+        "Capsules": "كبسولات",
+        "Syrup": "شراب",
+        "Suspension": "معلق",
+        "Drops": "قطرة",
+        "Cream": "كريم",
+        "Ointment": "مرهم",
+        "Gel": "جل",
+        "Spray": "بخاخ",
+        "Injection": "حقن",
+        "Sachet": "أكياس",
+        "Suppository": "تحاميل",
+    }
 
     # =========================================================================
     # Dashboard (Tab 0)
@@ -191,7 +208,7 @@ class CoreTabsMixin:
         if not hasattr(self, "dash_cards"):
             return
         try:
-            self.lbl_dash_date.setText("اليوم: %s  •  اضغط على أي بطاقة للانتقال لتبويبها" % date.today().isoformat())
+            self.lbl_dash_date.setText("اليوم: %s  •  اضغط على أي بطاقة للانتقال لتبويبها" % ar_date(date.today()))
             r = self.db.report_daily()
             low = self.db.low_stock()
             exp30 = self.db.near_expiry(30)
@@ -371,7 +388,7 @@ class CoreTabsMixin:
         top.setSpacing(8)
         top.addWidget(StrongBodyLabel("🔎 باركود:"))
         self.e_barcode = LineEdit()
-        self.e_barcode.setPlaceholderText("امسح الباركود ثم Enter")
+        self.e_barcode.setPlaceholderText("امسح الباركود ثم اضغط Enter")
         self.e_barcode.setMinimumWidth(150)
         self.e_barcode.setFont(ui_theme.qfont(13))
         self.e_barcode.returnPressed.connect(self.pos_scan)
@@ -864,7 +881,8 @@ class CoreTabsMixin:
             messagebox.showinfo("تنبيه", "لا يوجد إيصال بعد — أتمم بيع أولاً", parent=self)
             return
         inv, cart, total, change, pay = self.last_receipt
-        lines = ["Pharmacy Enterprise", "فاتورة: %s" % inv, "-" * 34]
+        _pharmacy_name = self.db.get_setting("pharmacy_name", "صيدلية المؤسسة") or "صيدلية المؤسسة"
+        lines = [_pharmacy_name, "فاتورة: %s" % inv, "-" * 34]
         for it in cart:
             up = unit_price(it["drug"], it["pack_level"])
             lines.append("%s x%s @ %s = %s" % (it["drug"]["trade_en"], it["qty_display"], money(up), money(up * float(it["qty_display"]))))
@@ -1244,8 +1262,8 @@ class CoreTabsMixin:
 
             if key == "form":
                 cb = EditableComboBox()
-                cb.addItems(['Tablets', 'Capsules', 'Syrup', 'Suspension', 'Drops', 'Cream', 'Ointment', 'Gel', 'Spray', 'Injection', 'Sachet', 'Suppository'])
-                cb.setText(val)
+                cb.addItems(list(self.FORM_AR.values()))
+                cb.setText(self.FORM_AR.get(str(val).strip(), str(val)))
                 form.addWidget(cb)
                 fields[key] = cb
             elif key == "barcode":

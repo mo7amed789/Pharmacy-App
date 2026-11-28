@@ -233,7 +233,7 @@ def allowed_units(drug):
         form,
     ):
         return ["box"]
-    if re.search(r"suppositor|pessar|ovule|sachet|تحميلة|تحاميل|لبوس|لبوسة|ظرف", form):
+    if re.search(r"suppositor|pessar|ovule|sachet|تحميلة|تحاميل|لبوس|لبوسة|ظرف|أكياس|كيس", form):
         return ["box", "pill"]
     return ["box", "strip", "pill"]
 
@@ -1199,7 +1199,7 @@ class DB:
             c.execute("INSERT INTO users (username, password_hash, role, full_name) VALUES (?,?,?,?)",
                       ("cashier", _hash("cashier123"), "cashier", "الكاشير"))
         c.execute("INSERT OR IGNORE INTO settings VALUES (?,?)",
-                  ("pharmacy_name", "صيدلية المؤسسة — Pharmacy Enterprise"))
+                  ("pharmacy_name", "صيدلية المؤسسة"))
         self.conn.commit()
 
     # ---------- settings / mobile PIN (v4) ----------

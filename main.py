@@ -102,7 +102,7 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         # RTL comes from QApplication (ui_theme.apply_qt_theme / main()) and
         # cascades to every content widget automatically.
         self.setWindowTitle(
-            "Pharmacy Enterprise v6.30 — صيدلية المؤسسة | المستخدم: %s (%s)"
+            "صيدلية المؤسسة v6.30 | المستخدم: %s (%s)"
             % (self.username, "مدير" if self.is_admin else "موظف")
         )
         self.pal = ui_theme.apply_qt_theme(
@@ -235,7 +235,7 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         # prevent the double-reversal that would mirror the entire bar.
         self.topbar.setLayoutDirection(Qt.LeftToRight)
 
-        brand = StrongBodyLabel("💊 Pharmacy Enterprise")
+        brand = StrongBodyLabel("💊 صيدلية المؤسسة")
         brand.setStyleSheet(f"color: {self.pal['accent']};")
         self._lbl_brand = brand
         lay.addWidget(brand)

@@ -46,7 +46,7 @@ from qfluentwidgets import (
     TitleLabel,
 )
 
-from app_helpers import BASE, money, qr_url_with_pin
+from app_helpers import BASE, ar_date, money, qr_url_with_pin
 from database import DB
 import ui_dialogs as messagebox
 import ui_theme
@@ -849,7 +849,7 @@ class SystemTabsMixin:
         if hotspot.open_hotspot_settings():
             self.show_banner("تم فتح إعدادات الهوت سبوت في ويندوز.", "info")
         else:
-            messagebox.showinfo("الإعدادات", "افتح يدوياً: الإعدادات > الشبكة والإنترنت > Mobile hotspot", parent=self)
+            messagebox.showinfo("الإعدادات", "افتح يدوياً: الإعدادات > الشبكة والإنترنت > نقطة الاتصال المحمولة", parent=self)
 
     def _selected_mobile_sale(self):
         idx = ui_theme.selected_row_index(self.tree_mobile)
@@ -860,11 +860,12 @@ class SystemTabsMixin:
 
     def receipt_lines_for_sale(self, sale):
         items = self.db.get_grouped_sale_items(sale["id"])
-        lines = ["Pharmacy Enterprise", self.db.get_setting("pharmacy_name", "صيدلية المؤسسة") or "صيدلية المؤسسة"]
+        _name = self.db.get_setting("pharmacy_name", "صيدلية المؤسسة") or "صيدلية المؤسسة"
+        lines = [_name]
         _phone = self.db.get_setting("pharmacy_phone", "")
         if _phone:
             lines.append("تليفون: %s" % _phone)
-        lines += ["فاتورة: %s" % sale["invoice_no"], "التاريخ: %s" % sale["date"], "-" * 34]
+        lines += ["فاتورة: %s" % sale["invoice_no"], "التاريخ: %s" % ar_date(sale["date"]), "-" * 34]
         _line_disc_total = 0.0
         for it in items:
             _ld = float(it.get("line_discount") or 0)
