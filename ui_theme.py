@@ -9,14 +9,17 @@ CardWidget, TableWidget, InfoBar, crisp RTL typography).
 import os
 import re
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QBrush
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QBrush
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QTextEdit,
     QAbstractItemView,
     QTableWidgetItem,
     QVBoxLayout,
@@ -322,6 +325,8 @@ def apply_qt_theme(app, theme_name="dark", accent="teal", font_scale=0):
             app.setFont(f)
         except Exception:
             pass
+    # Arabic text right-to-left, English text left-to-right, app wide.
+    install_auto_direction(app)
     return p
 
 
@@ -468,7 +473,9 @@ def configure_table(table: TableWidget, headers, widths=None, stretch_cols=None,
     table.setAlternatingRowColors(True)
 
     hh = table.horizontalHeader()
-    hh.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    # AlignAbsolute keeps Arabic headers on the right even inside RTL layouts
+    # (Qt mirrors relative AlignLeft/AlignRight otherwise).
+    hh.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter | Qt.AlignAbsolute)
     if widths:
         for idx, w in enumerate(widths):
             if w is not None and idx < len(headers):
@@ -489,8 +496,9 @@ def set_table_rows(table: TableWidget, rows_values, row_styles=None):
         for r_idx, vals in enumerate(rows_values):
             fg_bg = row_styles[r_idx] if row_styles and r_idx < len(row_styles) else None
             for c_idx, val in enumerate(vals):
-                item = QTableWidgetItem(str(val if val is not None else ""))
-                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignRight)
+                cell_text = str(val if val is not None else "")
+                item = QTableWidgetItem(cell_text)
+                item.setTextAlignment(cell_alignment(cell_text))
                 if fg_bg:
                     fg, bg = fg_bg
                     if fg:
@@ -598,33 +606,276 @@ class DrugSearchTableWidget(TableWidget):
             self.drugActivated.emit(self._results[row])
 
 
-def setup_main_window_geometry(win, db):
-    """Restore/save main window size, position, and maximized state in settings."""
-    saved = get_ui_pref(db, "ui_geometry", "")
-    maximized = get_ui_pref(db, "ui_maximized", "") == "1"
-    screen = QApplication.primaryScreen()
-    avail = screen.availableGeometry() if screen else None
+# ---------------------------------------------------------------------------
+# Bidirectional text — Arabic flows right to left, English flows left to right
+# ---------------------------------------------------------------------------
+_RTL_RE = re.compile(
+    "[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFC]"
+)
+_LTR_RE = re.compile("[A-Za-z\u00C0-\u024F]")
+
+
+def has_rtl_text(text):
+    """True when the string contains Arabic/Hebrew characters."""
+    return bool(_RTL_RE.search(str(text if text is not None else "")))
+
+
+def has_ltr_text(text):
+    """True when the string contains Latin letters."""
+    return bool(_LTR_RE.search(str(text if text is not None else "")))
+
+
+def direction_for_text(text):
+    """RTL for Arabic, LTR for Latin-only text, None when undecided."""
+    s = str(text if text is not None else "")
+    if not s.strip():
+        return None
+    if has_rtl_text(s):
+        return Qt.RightToLeft
+    if has_ltr_text(s):
+        return Qt.LeftToRight
+    return None
+
+
+def alignment_for_text(text, vertical_center=True):
+    """Absolute alignment: Arabic starts on the right, English on the left."""
+    flags = Qt.AlignRight if has_rtl_text(text) else Qt.AlignLeft
+    if vertical_center:
+        flags |= Qt.AlignVCenter
+    return flags
+
+
+def cell_alignment(text):
+    """Table-cell alignment that survives RTL mirroring."""
+    return alignment_for_text(text) | Qt.AlignAbsolute
+
+
+def _text_of(widget):
+    if isinstance(widget, QLabel):
+        return widget.text()
+    if isinstance(widget, QLineEdit):
+        return widget.text() or widget.placeholderText()
+    if isinstance(widget, (QPlainTextEdit, QTextEdit)):
+        return widget.toPlainText() or widget.placeholderText()
+    return ""
+
+
+def apply_text_direction(widget, text=None):
+    """Make one text widget flow Arabic->right, English->left."""
+    if not isinstance(widget, (QLabel, QLineEdit, QPlainTextEdit, QTextEdit)):
+        return None
+    s = _text_of(widget) if text is None else str(text)
+    direction = direction_for_text(s)
+    if direction is None:
+        return None
+    if widget.layoutDirection() != direction:
+        widget.setLayoutDirection(direction)
+    # Only labels still on the default left alignment are flipped, so labels
+    # that were deliberately centred keep their design.
+    if isinstance(widget, QLabel):
+        cur = widget.alignment()
+        if not (cur & (Qt.AlignRight | Qt.AlignHCenter | Qt.AlignJustify)):
+            widget.setAlignment(alignment_for_text(s))
+    return direction
+
+
+def apply_auto_direction(root):
+    """Apply Arabic/English auto-direction to a whole widget tree."""
+    if root is None:
+        return
+    try:
+        apply_text_direction(root)
+        for child in root.findChildren(QWidget):
+            apply_text_direction(child)
+    except Exception:
+        pass
+
+
+class _BidiFilter(QObject):
+    """Keeps late-built widgets correctly directed (labels, inputs, pages)."""
+
+    _TRIGGERS = (QEvent.Show, QEvent.Polish, QEvent.ChildPolished)
+
+    def __init__(self):
+        super().__init__()
+        self._watched = set()
+
+    def eventFilter(self, obj, event):
+        if event.type() in self._TRIGGERS:
+            target = obj
+            if event.type() == QEvent.ChildPolished:
+                target = event.child()
+            try:
+                apply_text_direction(target)
+                if isinstance(target, QLineEdit):
+                    self._watch(target)
+            except Exception:
+                pass
+        return False
+
+    def _watch(self, line_edit):
+        key = id(line_edit)
+        if key in self._watched:
+            return
+        self._watched.add(key)
+        try:
+            line_edit.textChanged.connect(
+                lambda _t, w=line_edit: apply_text_direction(w)
+            )
+        except Exception:
+            pass
+
+
+_BIDI_FILTER = None
+
+
+def install_auto_direction(app=None):
+    """Install the app-wide Arabic-RTL / English-LTR direction filter (once)."""
+    global _BIDI_FILTER
+    if _BIDI_FILTER is not None:
+        return _BIDI_FILTER
+    app = app if app is not None else QApplication.instance()
+    if app is None:
+        return None
+    try:
+        _BIDI_FILTER = _BidiFilter()
+        app.installEventFilter(_BIDI_FILTER)
+    except Exception:
+        _BIDI_FILTER = None
+    return _BIDI_FILTER
+
+
+# ---------------------------------------------------------------------------
+# Screen fitting — the window adapts to whatever display it runs on
+# ---------------------------------------------------------------------------
+def _screen_available(win=None):
+    """Available geometry of the screen the window is (or would be) on."""
+    screen = None
+    if win is not None:
+        try:
+            screen = win.screen()
+        except Exception:
+            screen = None
+    if screen is None:
+        try:
+            screen = QApplication.screenAt(QCursor.pos())
+        except Exception:
+            screen = None
+    if screen is None:
+        screen = QApplication.primaryScreen()
+    if screen is None:
+        return None
+    try:
+        return screen.availableGeometry()
+    except Exception:
+        return None
+
+
+def fitted_sizes(win=None):
+    """(min_w, min_h, default_w, default_h) that always fit the screen."""
+    avail = _screen_available(win)
     sw = avail.width() if avail else 1280
     sh = avail.height() if avail else 800
+    min_w = max(480, min(1024, sw - 60))
+    min_h = max(360, min(660, sh - 90))
+    def_w = max(min_w, min(int(sw * 0.92), 1440, sw - 20))
+    def_h = max(min_h, min(int(sh * 0.90), 920, sh - 40))
+    return min_w, min_h, def_w, def_h
 
-    win.setMinimumSize(min(1024, max(sw - 40, 720)), min(640, max(sh - 80, 500)))
+
+def nav_expand_width(win=None):
+    """Navigation panel width that scales with the screen it runs on."""
+    avail = _screen_available(win)
+    base = avail.width() if avail else (win.width() if win is not None else 1280)
+    return max(160, min(228, int(base * 0.15)))
+
+
+def setup_main_window_geometry(win, db):
+    """Restore/save the main window size, always fitted to the current screen."""
+    avail = _screen_available(win)
+    sw = avail.width() if avail else 1280
+    sh = avail.height() if avail else 800
+    min_w, min_h, def_w, def_h = fitted_sizes(win)
+
+    win.setMinimumSize(min_w, min_h)
+
+    saved = get_ui_pref(db, "ui_geometry", "")
+    maximized = get_ui_pref(db, "ui_maximized", "") == "1"
 
     placed = False
     m = _GEOMETRY_RE.match(str(saved or ""))
     if m:
         w, h, x, y = (int(v) for v in m.groups())
-        if 700 <= w <= sw + 200 and 450 <= h <= sh + 200 and -50 <= x <= sw - 80 and -50 <= y <= sh - 80:
-            win.resize(w, h)
-            win.move(x, y)
-            placed = True
+        # Accept a saved geometry only if it still fits this screen, then clamp
+        # it so a window saved on a big monitor never overflows a laptop panel.
+        if 480 <= w <= sw and 360 <= h <= sh:
+            w = max(min_w, min(w, sw))
+            h = max(min_h, min(h, sh))
+            if avail:
+                x = min(max(x, avail.x()), avail.x() + max(0, sw - min_w))
+                y = min(max(y, avail.y()), avail.y() + max(0, sh - min_h))
+                win.resize(w, h)
+                win.move(x, y)
+                placed = True
     if not placed:
-        w = min(int(sw * 0.88), 1460)
-        h = min(int(sh * 0.88), 920)
-        win.resize(w, h)
+        win.resize(def_w, def_h)
         if avail:
-            win.move(avail.x() + max(0, (sw - w) // 2), avail.y() + max(0, (sh - h) // 2))
+            win.move(
+                avail.x() + max(0, (sw - def_w) // 2),
+                avail.y() + max(0, (sh - def_h) // 2),
+            )
     if maximized or not saved:
         win.showMaximized()
+
+
+def install_screen_fit(win):
+    """Keep the window inside the display when it is dragged to another screen."""
+    if win is None:
+        return
+
+    def _refit(*_args):
+        try:
+            avail = _screen_available(win)
+            if avail is None:
+                return
+            min_w, min_h, def_w, def_h = fitted_sizes(win)
+            win.setMinimumSize(min_w, min_h)
+            if win.isMaximized() or win.isFullScreen():
+                return
+            g = win.geometry()
+            w = max(min_w, min(g.width(), avail.width()))
+            h = max(min_h, min(g.height(), avail.height()))
+            x = min(max(g.x(), avail.x()), avail.x() + max(0, avail.width() - min_w))
+            y = min(max(g.y(), avail.y()), avail.y() + max(0, avail.height() - min_h))
+            if (x, y, w, h) != (g.x(), g.y(), g.width(), g.height()):
+                win.setGeometry(x, y, w, h)
+        except Exception:
+            pass
+
+    handle = None
+    try:
+        handle = win.windowHandle()
+    except Exception:
+        handle = None
+    if handle is not None:
+        handle.screenChanged.connect(_refit)
+        return
+
+    state = {"tries": 0}
+
+    def _attach():
+        try:
+            handle = win.windowHandle()
+        except Exception:
+            handle = None
+        if handle is not None:
+            handle.screenChanged.connect(_refit)
+        elif state["tries"] < 40:
+            state["tries"] += 1
+            QTimer.singleShot(100, _attach)
+
+    QTimer.singleShot(100, _attach)
+
 
 
 def save_main_window_geometry(win, db):
@@ -640,12 +891,11 @@ def save_main_window_geometry(win, db):
 
 def fit_dialog_widget(dlg, w, h):
     """Size and center a Qt dialog cleanly within the available screen."""
-    screen = QApplication.primaryScreen()
-    avail = screen.availableGeometry() if screen else None
+    avail = _screen_available(dlg)
     sw = avail.width() if avail else 1280
     sh = avail.height() if avail else 800
-    w = min(int(w), max(sw - 60, 420))
-    h = min(int(h), max(sh - 90, 340))
+    w = min(int(w), max(sw - 60, 360))
+    h = min(int(h), max(sh - 90, 280))
     dlg.resize(w, h)
     if avail:
         dlg.move(avail.x() + max(0, (sw - w) // 2), avail.y() + max(0, (sh - h) // 2))

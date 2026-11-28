@@ -10,8 +10,8 @@ import sys
 import threading
 
 from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QWidget
+from PySide6.QtGui import QKeySequence, QShortcut, QGuiApplication
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CardWidget,
@@ -96,7 +96,11 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         self.ui_alerts_top = (db.get_setting("ui_alerts_top", "1") or "1") != "0"
         self.ui_dash_cards = db.get_setting("ui_dash_cards", "") or ""
 
-        self.setLayoutDirection(Qt.RightToLeft)
+        # NOTE: never call setLayoutDirection() on the FluentWindow itself.
+        # It reverses the window's *internal* HBoxLayout (nav panel + content
+        # column) and shuffles the title bar, top bar and pages around.
+        # RTL comes from QApplication (ui_theme.apply_qt_theme / main()) and
+        # cascades to every content widget automatically.
         self.setWindowTitle(
             "Pharmacy Enterprise v6.30 — صيدلية المؤسسة | المستخدم: %s (%s)"
             % (self.username, "مدير" if self.is_admin else "موظف")
@@ -107,11 +111,13 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         ui_dialogs.set_theme(self.theme_name, self.ui_accent)
         self.setStyleSheet(ui_theme.window_qss(self.theme_name, self.ui_accent))
         ui_theme.setup_main_window_geometry(self, db)
+        ui_theme.install_screen_fit(self)
         ui_theme.apply_win11_window_style(self, self.theme_name, self.ui_accent)
 
-        # NavigationView appearance
+        # NavigationView appearance — scale with the screen so the panel never
+        # eats the content area on small panels.
         try:
-            self.navigationInterface.setExpandWidth(220)
+            self.navigationInterface.setExpandWidth(ui_theme.nav_expand_width(self))
         except Exception:
             pass
 
@@ -166,6 +172,14 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         self.build_dashboard(self._tab_widgets[0])
         self._tab_built[0] = True
         self.stackedWidget.currentChanged.connect(self._on_tab_changed)
+
+        # The navigation panel reports its full stack height as a hard minimum,
+        # which would push the window past short screens. It scrolls on its own,
+        # so let it shrink instead.
+        try:
+            self.navigationInterface.setMinimumHeight(0)
+        except Exception:
+            pass
 
         # Shortcuts
         QShortcut(QKeySequence("F1"), self, activated=self.show_shortcuts)
@@ -249,8 +263,8 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         b_help = PushButton("❓ (F1)")
         b_help.clicked.connect(self.show_shortcuts)
         lay.addWidget(b_help)
+        self.btn_help = b_help
 
-        self.widgetLayout.insertWidget(0, self.topbar)
 
         # Compact Fluent status strip right under the top bar
         self._banner_wrap = QWidget(self)
@@ -262,8 +276,41 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         self.banner.setWordWrap(True)
         self.banner.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         bl.addWidget(self.banner, 1)
-        self.widgetLayout.insertWidget(1, self._banner_wrap)
+
+        # FluentWindow.widgetLayout is a *horizontal* layout that only holds
+        # stackedWidget, so inserting rows into it lays them out side-by-side
+        # as vertical strips (squashed content, top bar on the wrong edge).
+        # Build a real vertical column instead: top bar, banner, pages.
+        self.widgetLayout.removeWidget(self.stackedWidget)
+        self.contentLayout = QVBoxLayout()
+        self.contentLayout.setContentsMargins(0, 0, 0, 0)
+        self.contentLayout.setSpacing(0)
+        self.contentLayout.addWidget(self.topbar, 0)
+        self.contentLayout.addWidget(self._banner_wrap, 0)
+        self.contentLayout.addWidget(self.stackedWidget, 1)
+        self.widgetLayout.addLayout(self.contentLayout, 1)
+
         self.show_banner("جاهز — اختر تبويباً أو ابدأ البيع من الكاشير.", "info")
+        self._topbar_compact(self.width())
+
+    def _topbar_compact(self, width):
+        """Drop low-priority top-bar items on narrow windows so the bar never
+        forces the window wider than the screen."""
+        wide = width >= 1180
+        mid = width >= 980
+        for widget, visible in (
+            (getattr(self, "_lbl_brand", None), wide),
+            (getattr(self, "lbl_top_pharmacy", None), mid),
+            (getattr(self, "lbl_top_user", None), mid),
+            (getattr(self, "lbl_top_shift", None), wide),
+            (getattr(self, "btn_help", None), mid),
+        ):
+            if widget is not None:
+                widget.setVisible(visible)
+        try:
+            self.cb_branch.setMaximumWidth(200 if wide else 130)
+        except Exception:
+            pass
 
     def _build_branch_selector(self, lay):
         branches = self.db.list_branches(active_only=True)
@@ -443,6 +490,11 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
             self.goto_tab(0)
             return
         self._ensure_tab(idx)
+        # Newly built pages: Arabic right-to-left, English left-to-right.
+        try:
+            ui_theme.apply_auto_direction(self.stackedWidget.currentWidget())
+        except Exception:
+            pass
         if idx == 0:
             self.refresh_dashboard()
         elif idx == 9:
@@ -586,6 +638,13 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         threading.excepthook = lambda args: handle_exception(args.exc_type, args.exc_value, args.exc_traceback)
 
     # ---------- Window Lifecycle ----------
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            self._topbar_compact(self.width())
+        except Exception:
+            pass
+
     def closeEvent(self, event):
         ui_theme.save_main_window_geometry(self, self.db)
         try:
@@ -665,8 +724,19 @@ def _show_fatal_error(title, summary, detail=""):
 
 def main():
     _enable_dpi_awareness()
+    # Fractional scaling (125% / 150% / 175%) must not round the UI up into a
+    # size the screen cannot show; PassThrough keeps the logical size faithful.
+    try:
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except Exception:
+        pass
     qapp = QApplication.instance() or QApplication(sys.argv)
+    # Arabic interface flows right-to-left; every text widget is then flipped
+    # to left-to-right automatically when it holds English text.
     qapp.setLayoutDirection(Qt.RightToLeft)
+    ui_theme.install_auto_direction(qapp)
     qapp.setApplicationName("Pharmacy Enterprise")
 
     try:
