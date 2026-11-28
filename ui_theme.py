@@ -318,6 +318,7 @@ def apply_qt_theme(app, theme_name="dark", accent="teal", font_scale=0):
         try:
             app.setLayoutDirection(Qt.RightToLeft)
             f = QFont(fam, 10 + FONT_DELTA)
+            f.setStyleStrategy(QFont.PreferAntialias)
             app.setFont(f)
         except Exception:
             pass
@@ -344,6 +345,24 @@ def window_qss(theme_name=None, accent=None):
         max-height: 1px;
         min-height: 1px;
     }}
+    /* RTL: right-align all input fields */
+    QLineEdit, LineEdit, SearchLineEdit, PasswordLineEdit {{
+        text-align: right;
+    }}
+    QTextEdit, TextEdit {{
+        text-align: right;
+    }}
+    QComboBox, ComboBox, EditableComboBox {{
+        text-align: right;
+    }}
+    /* RTL: right-align all labels by default */
+    QLabel {{
+        qproperty-alignment: 'AlignRight|AlignVCenter';
+    }}
+    /* Fluent-specific RTL button layout */
+    QPushButton, PushButton, PrimaryPushButton {{
+        text-align: center;
+    }}
     """
 
 
@@ -362,9 +381,11 @@ def make_scroll_page(object_name="page"):
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
     scroll.setStyleSheet("background-color: transparent; border: none;")
+    scroll.setLayoutDirection(Qt.RightToLeft)
 
     inner = QWidget()
     inner.setStyleSheet("background-color: transparent;")
+    inner.setLayoutDirection(Qt.RightToLeft)
     layout = QVBoxLayout(inner)
     layout.setContentsMargins(20, 14, 20, 20)
     layout.setSpacing(12)
@@ -391,7 +412,8 @@ class StatCard(CardWidget):
         self._bar = QFrame()
         self._bar.setFixedWidth(5)
         self._bar.setStyleSheet(
-            f"background-color: {self._accent_color}; border-top-right-radius: 6px; border-bottom-right-radius: 6px;"
+            f"background-color: {self._accent_color}; border-top-left-radius: 6px; border-bottom-left-radius: 6px;"
+            f" border-top-right-radius: 6px; border-bottom-right-radius: 6px;"
         )
         outer.addWidget(self._bar)
 
@@ -446,7 +468,7 @@ def configure_table(table: TableWidget, headers, widths=None, stretch_cols=None,
     table.setAlternatingRowColors(True)
 
     hh = table.horizontalHeader()
-    hh.setDefaultAlignment(Qt.AlignCenter)
+    hh.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
     if widths:
         for idx, w in enumerate(widths):
             if w is not None and idx < len(headers):
@@ -468,7 +490,7 @@ def set_table_rows(table: TableWidget, rows_values, row_styles=None):
             fg_bg = row_styles[r_idx] if row_styles and r_idx < len(row_styles) else None
             for c_idx, val in enumerate(vals):
                 item = QTableWidgetItem(str(val if val is not None else ""))
-                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignRight)
                 if fg_bg:
                     fg, bg = fg_bg
                     if fg:

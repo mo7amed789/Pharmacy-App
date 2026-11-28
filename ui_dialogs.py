@@ -191,6 +191,7 @@ def _ask_input(title, prompt, initialvalue="", mode="str", parent=None):
 
     edt = LineEdit()
     edt.setClearButtonEnabled(True)
+    edt.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
     if initialvalue is not None and str(initialvalue) != "":
         edt.setText(str(initialvalue))
         edt.selectAll()

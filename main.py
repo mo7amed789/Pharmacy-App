@@ -67,6 +67,13 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         super().__init__()
         self._ui_signal.connect(self._on_ui_dispatch, Qt.QueuedConnection)
 
+        # Fix RTL for FluentWindow internals:
+        # Keep titleBar buttons on the right (they're LTR by design — keep it)
+        try:
+            self.titleBar.setLayoutDirection(Qt.LeftToRight)
+        except Exception:
+            pass
+
         # Branch scope
         _b, _u = db.scope_for_user(self.username)
         db.set_scope(_b, _u)
@@ -206,6 +213,10 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         lay = QHBoxLayout(self.topbar)
         lay.setContentsMargins(14, 8, 14, 8)
         lay.setSpacing(10)
+        # Keep topbar layout LTR: brand on left, action buttons on right.
+        # The FluentWindow is RTL so we explicitly reset to LTR here to
+        # prevent the double-reversal that would mirror the entire bar.
+        self.topbar.setLayoutDirection(Qt.LeftToRight)
 
         brand = StrongBodyLabel("💊 Pharmacy Enterprise")
         brand.setStyleSheet(f"color: {self.pal['accent']};")
@@ -245,9 +256,11 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
         self._banner_wrap = QWidget(self)
         bl = QHBoxLayout(self._banner_wrap)
         bl.setContentsMargins(16, 4, 16, 4)
+        bl.setDirection(QHBoxLayout.RightToLeft)
         self.banner = QLabel("جاهز — اختر تبويباً أو ابدأ البيع من الكاشير.")
         self.banner.setFont(ui_theme.qfont(10, bold=True))
         self.banner.setWordWrap(True)
+        self.banner.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         bl.addWidget(self.banner, 1)
         self.widgetLayout.insertWidget(1, self._banner_wrap)
         self.show_banner("جاهز — اختر تبويباً أو ابدأ البيع من الكاشير.", "info")
@@ -298,7 +311,7 @@ class App(CoreTabsMixin, OpsTabsMixin, SystemTabsMixin, FluentWindow):
                     content=str(text),
                     isClosable=True,
                     duration=2500,
-                    position=InfoBarPosition.TOP_LEFT,
+                    position=InfoBarPosition.TOP_RIGHT,
                     parent=self,
                 )
             except Exception:

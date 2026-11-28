@@ -123,7 +123,8 @@ class LoginWindow(QDialog):
         self.setWindowTitle("تسجيل الدخول — Pharmacy Enterprise")
         self.setLayoutDirection(Qt.RightToLeft)
         self.setStyleSheet(ui_theme.window_qss(self._theme, self._accent))
-        self.setFixedSize(440, 470)
+        self.setMinimumSize(440, 490)
+        self.setMaximumSize(500, 560)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 18)
@@ -167,6 +168,7 @@ class LoginWindow(QDialog):
         self.e_user = LineEdit()
         self.e_user.setPlaceholderText("أدخل اسم المستخدم")
         self.e_user.setClearButtonEnabled(True)
+        self.e_user.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         body.addWidget(self.e_user)
 
         body.addSpacing(4)
